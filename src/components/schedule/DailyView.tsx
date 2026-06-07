@@ -16,7 +16,7 @@ import {
   timeWindowCovers,
   SHIFT_TIMES,
 } from '../../lib/types';
-import { AlertTriangle, FileText, CheckCircle2 } from 'lucide-react';
+import { AlertTriangle, FileText, CheckCircle2, GripVertical, Clock } from 'lucide-react';
 
 interface DailyViewProps {
   day: DayOfWeek;
@@ -26,6 +26,7 @@ interface DailyViewProps {
   clients: Client[];
   sessionNotes: SessionNote[];
   onUpdateAssignment: (id: string, staffId: string | null) => void;
+  onMoveAssignment: (id: string, day: DayOfWeek, shift: AssignmentShift) => void;
   onToggleNote: (assignmentId: string) => void;
 }
 
@@ -67,9 +68,12 @@ export function DailyView({
   clients,
   sessionNotes,
   onUpdateAssignment,
+  onMoveAssignment,
   onToggleNote,
 }: DailyViewProps) {
   const [editingCell, setEditingCell] = React.useState<string | null>(null);
+  const [draggingId, setDraggingId] = React.useState<string | null>(null);
+  const [dragOver, setDragOver] = React.useState<string | null>(null);
   const containerRef = React.useRef<HTMLDivElement>(null);
 
   React.useEffect(() => {
@@ -98,6 +102,9 @@ export function DailyView({
     return (c.attendance ?? []).some((a) => a.day_of_week === day);
   });
 
+  // Other days for dragging to a different day
+  const otherDays = DAYS.filter((d) => d !== day);
+
   if (!dayClients.length) {
     return (
       <div>
@@ -107,13 +114,57 @@ export function DailyView({
     );
   }
 
+  function handleDragStart(e: React.DragEvent, assignmentId: string) {
+    setDraggingId(assignmentId);
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', assignmentId);
+  }
+
+  function handleDragEnd() {
+    setDraggingId(null);
+    setDragOver(null);
+  }
+
+  function handleDrop(e: React.DragEvent, targetDay: DayOfWeek, shift: AssignmentShift) {
+    e.preventDefault();
+    const id = e.dataTransfer.getData('text/plain');
+    if (id) onMoveAssignment(id, targetDay, shift);
+    setDraggingId(null);
+    setDragOver(null);
+  }
+
   return (
     <div ref={containerRef}>
-      <DayPicker day={day} onChange={onDayChange} />
+      <div className="flex items-center gap-3 flex-wrap">
+        <DayPicker day={day} onChange={onDayChange} />
+        {/* Drop zones for other days */}
+        {draggingId && (
+          <div className="flex items-center gap-2 ml-2">
+            <span className="text-xs text-slate-400">Move to:</span>
+            {otherDays.map((d) => (
+              ['AM', 'PM'].map((sh) => (
+                <div
+                  key={`${d}-${sh}`}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold border-2 border-dashed transition-colors cursor-copy ${
+                    dragOver === `day-${d}-${sh}`
+                      ? 'bg-aqua-100 border-aqua-500 text-aqua-700'
+                      : 'bg-white border-slate-300 text-slate-500 hover:border-aqua-400 hover:bg-aqua-50'
+                  }`}
+                  onDragOver={(e) => { e.preventDefault(); setDragOver(`day-${d}-${sh}`); }}
+                  onDragLeave={() => setDragOver(null)}
+                  onDrop={(e) => handleDrop(e, d, sh as AssignmentShift)}
+                >
+                  {DAY_SHORT[d]} {sh}
+                </div>
+              ))
+            ))}
+          </div>
+        )}
+      </div>
 
       <div className="overflow-x-auto mt-4">
         <div style={{ minWidth: `${100 + dayClients.length * 130}px` }}>
-          {/* Header row: Time | Client... */}
+          {/* Header row */}
           <div
             className="grid bg-slate-800 text-white text-xs font-semibold rounded-t-xl"
             style={{ gridTemplateColumns: `80px repeat(${dayClients.length}, 1fr)` }}
@@ -140,7 +191,6 @@ export function DailyView({
                 }`}
                 style={{ gridTemplateColumns: `80px repeat(${dayClients.length}, 1fr)` }}
               >
-                {/* Time label */}
                 <div className={`px-3 py-2.5 flex flex-col justify-center border-r ${isBlocked ? 'border-rose-200' : 'border-slate-100'}`}>
                   <span className={`text-xs font-semibold ${isBlocked ? 'text-rose-600' : 'text-slate-600'}`}>
                     {formatTime(slotStart)}
@@ -171,6 +221,7 @@ export function DailyView({
                   const note = noteByAssignment.get(a.id);
                   const cellId = `${slotStart}-${c.id}`;
                   const isEditing = editingCell === cellId;
+                  const isBeingDragged = draggingId === a.id;
 
                   const eligibleStaff = staff.filter((s) => {
                     if (!s.is_active) return false;
@@ -190,7 +241,13 @@ export function DailyView({
                   });
 
                   return (
-                    <div key={c.id} className="border-l border-slate-100 px-1.5 py-1.5 relative group">
+                    <div
+                      key={c.id}
+                      className={`border-l border-slate-100 px-1.5 py-1.5 relative group transition-opacity ${isBeingDragged ? 'opacity-40' : 'opacity-100'}`}
+                      draggable={isFirst}
+                      onDragStart={isFirst ? (e) => handleDragStart(e, a.id) : undefined}
+                      onDragEnd={isFirst ? handleDragEnd : undefined}
+                    >
                       <div className={`rounded px-1.5 py-1 text-xs h-full min-h-[36px] ${
                         hasViolation
                           ? 'bg-red-100 border border-red-300 text-red-800'
@@ -206,8 +263,11 @@ export function DailyView({
                             className="text-left flex-1 min-w-0"
                           >
                             {isFirst && (
-                              <div className="font-semibold truncate leading-tight">
-                                {staffObj?.name ?? <em className="font-normal">Unassigned</em>}
+                              <div className="flex items-center gap-0.5">
+                                <GripVertical size={9} className="opacity-30 flex-shrink-0 cursor-grab" />
+                                <div className="font-semibold truncate leading-tight">
+                                  {staffObj?.name ?? <em className="font-normal">Unassigned</em>}
+                                </div>
                               </div>
                             )}
                             {!isFirst && (
@@ -256,6 +316,19 @@ export function DailyView({
                               <span>{s.name}</span>
                               <span className="text-slate-400">T{s.priority_tier}</span>
                             </button>
+                          ))}
+                          <div className="border-t border-slate-100 mt-1 pt-1 px-3 py-1.5 text-xs text-slate-400 font-medium">Move to day</div>
+                          {DAYS.filter((d) => d !== day).map((d) => (
+                            ['AM', 'PM'].map((sh) => (
+                              <button
+                                key={`${d}-${sh}`}
+                                onClick={() => { onMoveAssignment(a.id, d, sh as AssignmentShift); setEditingCell(null); }}
+                                className="w-full text-left px-3 py-2 text-xs text-slate-700 hover:bg-aqua-50 flex items-center gap-1"
+                              >
+                                <Clock size={10} className="text-slate-400" />
+                                {DAY_SHORT[d]} – {sh}
+                              </button>
+                            ))
                           ))}
                         </div>
                       )}

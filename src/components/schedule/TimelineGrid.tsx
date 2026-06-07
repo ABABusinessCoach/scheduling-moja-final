@@ -14,7 +14,7 @@ import {
   formatTime,
   timeWindowCovers,
 } from '../../lib/types';
-import { AlertTriangle, FileText, CheckCircle2 } from 'lucide-react';
+import { AlertTriangle, FileText, CheckCircle2, GripVertical } from 'lucide-react';
 
 interface TimelineGridProps {
   assignments: ScheduleAssignment[];
@@ -22,6 +22,7 @@ interface TimelineGridProps {
   clients: Client[];
   sessionNotes: SessionNote[];
   onUpdateAssignment: (id: string, staffId: string | null) => void;
+  onMoveAssignment: (id: string, day: DayOfWeek, shift: AssignmentShift) => void;
   onToggleNote: (assignmentId: string) => void;
 }
 
@@ -63,9 +64,12 @@ export function TimelineGrid({
   clients,
   sessionNotes,
   onUpdateAssignment,
+  onMoveAssignment,
   onToggleNote,
 }: TimelineGridProps) {
   const [editingCell, setEditingCell] = React.useState<string | null>(null);
+  const [draggingId, setDraggingId] = React.useState<string | null>(null);
+  const [dragOver, setDragOver] = React.useState<string | null>(null);
   const containerRef = React.useRef<HTMLDivElement>(null);
 
   React.useEffect(() => {
@@ -92,6 +96,32 @@ export function TimelineGrid({
       if (client?.no_male_therapists && s.gender === 'male') return false;
       return true;
     });
+  }
+
+  function handleDragStart(e: React.DragEvent, assignmentId: string) {
+    setDraggingId(assignmentId);
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', assignmentId);
+  }
+
+  function handleDragEnd() {
+    setDraggingId(null);
+    setDragOver(null);
+  }
+
+  function handleDragOver(e: React.DragEvent, dropKey: string) {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    setDragOver(dropKey);
+  }
+
+  function handleDrop(e: React.DragEvent, day: DayOfWeek, slotStart: string) {
+    e.preventDefault();
+    const id = e.dataTransfer.getData('text/plain');
+    const shift = slotShift(slotStart);
+    if (id && shift) onMoveAssignment(id, day, shift);
+    setDraggingId(null);
+    setDragOver(null);
   }
 
   if (!clients.filter((c) => c.is_active).length) {
@@ -147,9 +177,19 @@ export function TimelineGrid({
                 }
 
                 const slotAssignments = getSlotAssignments(assignments, day, slotStart);
+                const dropKey = `${day}-${slotStart}`;
+                const isDragTarget = dragOver === dropKey && !!slotShift(slotStart);
 
                 return (
-                  <div key={day} className="px-1.5 py-1.5 border-l border-slate-100 space-y-1 min-h-[36px]">
+                  <div
+                    key={day}
+                    className={`px-1.5 py-1.5 border-l border-slate-100 space-y-1 min-h-[36px] transition-colors ${
+                      isDragTarget ? 'bg-aqua-50 ring-2 ring-inset ring-aqua-400 rounded' : ''
+                    }`}
+                    onDragOver={(e) => handleDragOver(e, dropKey)}
+                    onDragLeave={() => setDragOver(null)}
+                    onDrop={(e) => handleDrop(e, day, slotStart)}
+                  >
                     {slotAssignments.map((a) => {
                       const clientObj = clients.find((c) => c.id === a.client_id);
                       const staffObj = staff.find((s) => s.id === a.staff_id);
@@ -162,9 +202,16 @@ export function TimelineGrid({
 
                       const aStart = (a.time_start ?? '').slice(0, 5);
                       const isFirst = aStart === slotStart || (!aStart && idx === 0);
+                      const isBeingDragged = draggingId === a.id;
 
                       return (
-                        <div key={a.id} className="relative group">
+                        <div
+                          key={a.id}
+                          className={`relative group transition-opacity ${isBeingDragged ? 'opacity-40' : 'opacity-100'}`}
+                          draggable={isFirst}
+                          onDragStart={isFirst ? (e) => handleDragStart(e, a.id) : undefined}
+                          onDragEnd={isFirst ? handleDragEnd : undefined}
+                        >
                           <div className={`w-full rounded px-1.5 py-1 text-xs transition-colors ${
                             hasViolation
                               ? 'bg-red-100 border border-red-300 text-red-800'
@@ -180,10 +227,15 @@ export function TimelineGrid({
                                 className="flex-1 text-left min-w-0"
                               >
                                 <div className="truncate">
-                                  {isFirst && clientObj && (
-                                    <span className="font-semibold block leading-tight truncate">
-                                      {clientObj.first_name} {clientObj.last_name}
-                                    </span>
+                                  {isFirst && (
+                                    <div className="flex items-center gap-0.5">
+                                      <GripVertical size={9} className="opacity-30 flex-shrink-0 cursor-grab" />
+                                      {clientObj && (
+                                        <span className="font-semibold block leading-tight truncate">
+                                          {clientObj.first_name} {clientObj.last_name}
+                                        </span>
+                                      )}
+                                    </div>
                                   )}
                                   <span className="truncate opacity-80">
                                     {staffObj ? staffObj.name : <em>Unassigned</em>}
@@ -191,7 +243,6 @@ export function TimelineGrid({
                                 </div>
                               </button>
                               <div className="flex items-center gap-0.5 flex-shrink-0">
-                                {/* Note status badge */}
                                 {isFirst && (
                                   <button
                                     title={note?.submitted ? 'Note submitted — click to undo' : 'Note missing — click to mark submitted'}
@@ -271,6 +322,9 @@ export function TimelineGrid({
           </div>
           <div className="flex items-center gap-1.5 text-xs text-slate-500">
             <AlertTriangle size={12} className="text-red-500" />Violation
+          </div>
+          <div className="flex items-center gap-1.5 text-xs text-slate-400">
+            <GripVertical size={12} />Drag to move day
           </div>
         </div>
       </div>

@@ -1,4 +1,5 @@
-import React, { useState } from 'react';import type {
+import React, { useState } from 'react';
+import type {
   ScheduleAssignment,
   Staff,
   Client,
@@ -6,13 +7,14 @@ import React, { useState } from 'react';import type {
   AssignmentShift,
 } from '../../lib/types';
 import { DAY_SHORT, DAY_NAMES, SHIFT_TIMES, timeWindowCovers } from '../../lib/types';
-import { AlertTriangle, ChevronDown } from 'lucide-react';
+import { AlertTriangle, ChevronDown, GripVertical } from 'lucide-react';
 
 interface WeeklyGridProps {
   assignments: ScheduleAssignment[];
   staff: Staff[];
   clients: Client[];
   onUpdateAssignment: (id: string, staffId: string | null) => void;
+  onMoveAssignment: (id: string, day: DayOfWeek, shift: AssignmentShift) => void;
   weekLabel: string;
 }
 
@@ -24,9 +26,12 @@ export function WeeklyGrid({
   staff,
   clients,
   onUpdateAssignment,
+  onMoveAssignment,
   weekLabel,
 }: WeeklyGridProps) {
   const [editingCell, setEditingCell] = useState<string | null>(null);
+  const [draggingId, setDraggingId] = useState<string | null>(null);
+  const [dragOver, setDragOver] = useState<string | null>(null);
   const containerRef = React.useRef<HTMLDivElement>(null);
 
   React.useEffect(() => {
@@ -73,14 +78,6 @@ export function WeeklyGrid({
     });
   }
 
-  function clientHasAnyDay(client: Client, day: DayOfWeek): boolean {
-    const avail = client.availability ?? [];
-    if (avail.length === 0) {
-      return (client.attendance ?? []).some((a) => a.day_of_week === day);
-    }
-    return avail.some((a) => a.day_of_week === day);
-  }
-
   function getEligibleStaff(day: DayOfWeek, shift: AssignmentShift, client: Client): Staff[] {
     const shiftStart = SHIFT_TIMES[shift].start;
     const shiftEnd = SHIFT_TIMES[shift].end;
@@ -100,8 +97,32 @@ export function WeeklyGrid({
     });
   }
 
-  // Group clients for display — show each client row
   const activeClients = clients.filter((c) => c.is_active);
+
+  function handleDragStart(e: React.DragEvent, assignmentId: string) {
+    setDraggingId(assignmentId);
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', assignmentId);
+  }
+
+  function handleDragEnd() {
+    setDraggingId(null);
+    setDragOver(null);
+  }
+
+  function handleDragOver(e: React.DragEvent, dropKey: string) {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    setDragOver(dropKey);
+  }
+
+  function handleDrop(e: React.DragEvent, day: DayOfWeek, shift: AssignmentShift) {
+    e.preventDefault();
+    const id = e.dataTransfer.getData('text/plain');
+    if (id) onMoveAssignment(id, day, shift);
+    setDraggingId(null);
+    setDragOver(null);
+  }
 
   return (
     <div className="overflow-x-auto" ref={containerRef}>
@@ -116,10 +137,8 @@ export function WeeklyGrid({
           ))}
         </div>
 
-        {/* Shift sections */}
         {SHIFTS.map((shift) => {
           const shiftClients = activeClients.filter((c) => {
-            // Check if client attends any day for this shift
             for (const day of DAYS) {
               if (clientCanAttend(c, day, shift)) return true;
             }
@@ -130,120 +149,137 @@ export function WeeklyGrid({
 
           return (
             <div key={shift}>
-              {/* Shift header */}
               <div className="border border-slate-200 border-t-0 px-3 py-2 bg-brand-700 text-white text-xs font-semibold flex items-center gap-2">
                 <span>{shift === 'AM' ? 'AM Shift' : 'PM Shift'}</span>
                 <span className="text-slate-400 font-normal">{SHIFT_TIMES[shift].start} – {SHIFT_TIMES[shift].end}</span>
               </div>
 
-              {shiftClients.map((client) => {
-                return (
-                  <div
-                    key={`${shift}-${client.id}`}
-                    className="grid border border-slate-200 border-t-0 hover:bg-slate-50/50 transition-colors"
-                    style={{ gridTemplateColumns: '140px repeat(5, 1fr)' }}
-                  >
-                    <div className="px-3 py-3 flex items-center">
-                      <div>
-                        <div className="text-sm font-medium text-slate-800">
-                          {client.first_name} {client.last_name}
-                        </div>
-                        {client.no_male_therapists && (
-                          <div className="text-xs text-amber-600">F only</div>
+              {shiftClients.map((client) => (
+                <div
+                  key={`${shift}-${client.id}`}
+                  className="grid border border-slate-200 border-t-0 hover:bg-slate-50/50 transition-colors"
+                  style={{ gridTemplateColumns: '140px repeat(5, 1fr)' }}
+                >
+                  <div className="px-3 py-3 flex items-center">
+                    <div>
+                      <div className="text-sm font-medium text-slate-800">
+                        {client.first_name} {client.last_name}
+                      </div>
+                      {client.no_male_therapists && (
+                        <div className="text-xs text-amber-600">F only</div>
+                      )}
+                    </div>
+                  </div>
+
+                  {DAYS.map((day) => {
+                    const attends = clientCanAttend(client, day, shift);
+                    const assignment = getAssignment(day, shift, client.id);
+                    const staffName = getStaffName(assignment?.staff_id ?? null);
+                    const hasViolation = !!assignment?.violation_reason;
+                    const isManual = !!assignment?.is_manual_override;
+                    const cellId = `${shift}-${client.id}-${day}`;
+                    const isEditing = editingCell === cellId;
+                    const dropKey = `drop-${shift}-${day}`;
+                    const isDragTarget = dragOver === dropKey;
+                    const isBeingDragged = draggingId === assignment?.id;
+                    const eligibleStaff = getEligibleStaff(day, shift, client);
+
+                    return (
+                      <div
+                        key={day}
+                        className={`px-2 py-2.5 border-l border-slate-200 relative transition-colors ${
+                          !attends ? 'bg-slate-50' : isDragTarget ? 'bg-aqua-50 ring-2 ring-inset ring-aqua-400' : ''
+                        }`}
+                        onDragOver={(e) => attends && handleDragOver(e, dropKey)}
+                        onDragLeave={() => setDragOver(null)}
+                        onDrop={(e) => attends && handleDrop(e, day, shift)}
+                      >
+                        {!attends ? (
+                          <span className="text-slate-200 text-xs">—</span>
+                        ) : (
+                          <div className="relative">
+                            {assignment ? (
+                              <div
+                                draggable
+                                onDragStart={(e) => handleDragStart(e, assignment.id)}
+                                onDragEnd={handleDragEnd}
+                                className={`group transition-opacity ${isBeingDragged ? 'opacity-40' : 'opacity-100'}`}
+                              >
+                                <button
+                                  onClick={() => setEditingCell(isEditing ? null : cellId)}
+                                  className={`w-full text-left px-2 py-1.5 rounded-lg text-xs font-medium transition-colors flex items-center gap-1 cursor-grab active:cursor-grabbing ${
+                                    hasViolation
+                                      ? 'bg-red-50 border border-red-200 text-red-700 hover:bg-red-100'
+                                      : !assignment.staff_id
+                                      ? 'bg-amber-50 border border-amber-200 text-amber-600 hover:bg-amber-100'
+                                      : isManual
+                                      ? 'bg-blue-50 border border-blue-200 text-blue-700 hover:bg-blue-100'
+                                      : 'bg-aqua-50 border border-aqua-200 text-aqua-600 hover:bg-aqua-100'
+                                  }`}
+                                >
+                                  <GripVertical size={10} className="text-current opacity-40 flex-shrink-0 -ml-0.5" />
+                                  <span className="flex-1 truncate">
+                                    {staffName ?? <span className="italic font-normal">Unassigned</span>}
+                                  </span>
+                                  <span className="flex gap-0.5 flex-shrink-0">
+                                    {hasViolation && <AlertTriangle size={10} className="text-red-500" />}
+                                    {isManual && <span className="text-blue-400 text-xs">M</span>}
+                                    <ChevronDown size={10} className="text-current opacity-60" />
+                                  </span>
+                                </button>
+
+                                {hasViolation && (
+                                  <div className="absolute bottom-full left-0 mb-1 z-20 bg-red-800 text-white text-xs rounded-lg px-2 py-1 w-48 shadow-lg pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity">
+                                    {assignment.violation_reason}
+                                  </div>
+                                )}
+                              </div>
+                            ) : (
+                              <div className="w-full px-2 py-1.5 rounded-lg border border-dashed border-slate-200 text-xs text-slate-300 italic text-center">
+                                empty
+                              </div>
+                            )}
+
+                            {isEditing && (
+                              <div className="absolute top-full left-0 mt-1 z-30 bg-white border border-slate-200 rounded-xl shadow-xl py-1 w-44">
+                                <div className="px-3 py-1.5 text-xs text-slate-400 font-medium border-b border-slate-100">
+                                  Assign Staff
+                                </div>
+                                <button
+                                  onClick={() => {
+                                    if (assignment) onUpdateAssignment(assignment.id, null);
+                                    setEditingCell(null);
+                                  }}
+                                  className="w-full text-left px-3 py-2 text-xs text-amber-600 hover:bg-amber-50 transition-colors"
+                                >
+                                  — Unassign
+                                </button>
+                                {eligibleStaff
+                                  .sort((a, b) => a.priority_tier - b.priority_tier)
+                                  .map((s) => (
+                                    <button
+                                      key={s.id}
+                                      onClick={() => {
+                                        if (assignment) onUpdateAssignment(assignment.id, s.id);
+                                        setEditingCell(null);
+                                      }}
+                                      className={`w-full text-left px-3 py-2 text-xs hover:bg-aqua-50 transition-colors flex items-center justify-between ${
+                                        assignment?.staff_id === s.id ? 'text-aqua-600 font-semibold' : 'text-slate-700'
+                                      }`}
+                                    >
+                                      <span>{s.name}</span>
+                                      <span className="text-slate-400">T{s.priority_tier}</span>
+                                    </button>
+                                  ))}
+                              </div>
+                            )}
+                          </div>
                         )}
                       </div>
-                    </div>
-
-                    {DAYS.map((day) => {
-                      const attends = clientCanAttend(client, day, shift);
-                      const assignment = getAssignment(day, shift, client.id);
-                      const staffName = getStaffName(assignment?.staff_id ?? null);
-                      const hasViolation = !!assignment?.violation_reason;
-                      const isManual = !!assignment?.is_manual_override;
-                      const cellId = `${shift}-${client.id}-${day}`;
-                      const isEditing = editingCell === cellId;
-                      const eligibleStaff = getEligibleStaff(day, shift, client);
-
-                      return (
-                        <div
-                          key={day}
-                          className={`px-2 py-2.5 border-l border-slate-200 relative ${!attends ? 'bg-slate-50' : ''}`}
-                        >
-                          {!attends ? (
-                            <span className="text-slate-200 text-xs">—</span>
-                          ) : (
-                            <div className="relative">
-                              <button
-                                onClick={() => setEditingCell(isEditing ? null : cellId)}
-                                className={`w-full text-left px-2 py-1.5 rounded-lg text-xs font-medium transition-colors group flex items-center gap-1 ${
-                                  hasViolation
-                                    ? 'bg-red-50 border border-red-200 text-red-700 hover:bg-red-100'
-                                    : !assignment?.staff_id
-                                    ? 'bg-amber-50 border border-amber-200 text-amber-600 hover:bg-amber-100'
-                                    : isManual
-                                    ? 'bg-blue-50 border border-blue-200 text-blue-700 hover:bg-blue-100'
-                                    : 'bg-aqua-50 border border-aqua-200 text-aqua-600 hover:bg-aqua-100'
-                                }`}
-                              >
-                                <span className="flex-1 truncate">
-                                  {staffName ?? (
-                                    <span className="italic font-normal">Unassigned</span>
-                                  )}
-                                </span>
-                                <span className="flex gap-0.5 flex-shrink-0">
-                                  {hasViolation && <AlertTriangle size={10} className="text-red-500" />}
-                                  {isManual && <span className="text-blue-400 text-xs">M</span>}
-                                  <ChevronDown size={10} className="text-current opacity-60" />
-                                </span>
-                              </button>
-
-                              {hasViolation && (
-                                <div className="absolute bottom-full left-0 mb-1 z-20 bg-red-800 text-white text-xs rounded-lg px-2 py-1 w-48 shadow-lg pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity">
-                                  {assignment.violation_reason}
-                                </div>
-                              )}
-
-                              {isEditing && (
-                                <div className="absolute top-full left-0 mt-1 z-30 bg-white border border-slate-200 rounded-xl shadow-xl py-1 w-44">
-                                  <div className="px-3 py-1.5 text-xs text-slate-400 font-medium border-b border-slate-100">
-                                    Assign Staff
-                                  </div>
-                                  <button
-                                    onClick={() => {
-                                      if (assignment) onUpdateAssignment(assignment.id, null);
-                                      setEditingCell(null);
-                                    }}
-                                    className="w-full text-left px-3 py-2 text-xs text-amber-600 hover:bg-amber-50 transition-colors"
-                                  >
-                                    — Unassign
-                                  </button>
-                                  {eligibleStaff
-                                    .sort((a, b) => a.priority_tier - b.priority_tier)
-                                    .map((s) => (
-                                      <button
-                                        key={s.id}
-                                        onClick={() => {
-                                          if (assignment) onUpdateAssignment(assignment.id, s.id);
-                                          setEditingCell(null);
-                                        }}
-                                        className={`w-full text-left px-3 py-2 text-xs hover:bg-aqua-50 transition-colors flex items-center justify-between ${
-                                          assignment?.staff_id === s.id ? 'text-aqua-600 font-semibold' : 'text-slate-700'
-                                        }`}
-                                      >
-                                        <span>{s.name}</span>
-                                        <span className="text-slate-400">T{s.priority_tier}</span>
-                                      </button>
-                                    ))}
-                                </div>
-                              )}
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                );
-              })}
+                    );
+                  })}
+                </div>
+              ))}
             </div>
           );
         })}
@@ -261,6 +297,9 @@ export function WeeklyGrid({
           </div>
           <div className="flex items-center gap-1.5 text-xs text-slate-500">
             <AlertTriangle size={12} className="text-red-500" />Rule violation
+          </div>
+          <div className="flex items-center gap-1.5 text-xs text-slate-400">
+            <GripVertical size={12} />Drag to move
           </div>
         </div>
       </div>

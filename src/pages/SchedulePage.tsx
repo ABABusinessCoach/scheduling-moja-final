@@ -1,18 +1,10 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import { supabase } from '../lib/supabase';
-import type {
-  Schedule,
-  ScheduleAssignment,
-  Staff,
-  Client,
-  StaffClientRestriction,
-  DayOfWeek,
-  SessionNote,
-  RatioAlert,
-} from '../lib/types';
+import { useSchedule } from '../contexts/ScheduleContext';
+import type { DayOfWeek } from '../lib/types';
 import { DAY_NAMES } from '../lib/types';
-import { generateWeeklySchedule, computeRatioAlerts } from '../lib/scheduler';
-import { getMonday, format, addDays, formatWeekRange } from '../lib/dateUtils';
+import { generateWeeklySchedule } from '../lib/scheduler';
+import { format, addDays, formatWeekRange } from '../lib/dateUtils';
 import { WeeklyGrid } from '../components/schedule/WeeklyGrid';
 import { StaffView } from '../components/schedule/StaffView';
 import { ClientView } from '../components/schedule/ClientView';
@@ -40,121 +32,30 @@ import {
 type ViewMode = 'timeline' | 'daily' | 'grid' | 'staff' | 'client';
 
 export function SchedulePage() {
-  const [currentMonday, setCurrentMonday] = useState(() => getMonday(new Date()));
-  const [schedule, setSchedule] = useState<Schedule | null>(null);
-  const [assignments, setAssignments] = useState<ScheduleAssignment[]>([]);
-  const [staff, setStaff] = useState<Staff[]>([]);
-  const [clients, setClients] = useState<Client[]>([]);
-  const [allRestrictions, setAllRestrictions] = useState<StaffClientRestriction[]>([]);
-  const [sessionNotes, setSessionNotes] = useState<SessionNote[]>([]);
-  const [ratioAlerts, setRatioAlerts] = useState<RatioAlert[]>([]);
+  const {
+    currentMonday,
+    setCurrentMonday,
+    weekLabel,
+    staff,
+    clients,
+    allRestrictions,
+    schedule,
+    assignments,
+    sessionNotes,
+    ratioAlerts,
+    loading,
+    refreshSchedule,
+    setScheduleData,
+    handleUpdateAssignment,
+    handleMoveAssignment,
+    handleToggleNote,
+  } = useSchedule();
+
   const [viewMode, setViewMode] = useState<ViewMode>('timeline');
   const [selectedDay, setSelectedDay] = useState<DayOfWeek>(1);
-  const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
   const [alertsDismissed, setAlertsDismissed] = useState(false);
   const showToast = useToast();
-
-  useEffect(() => { loadBaseData(); }, []);
-
-  useEffect(() => {
-    loadSchedule();
-  }, [currentMonday]);
-
-  useEffect(() => {
-    if (staff.length > 0 && clients.length > 0) {
-      setRatioAlerts(computeRatioAlerts(staff, clients, allRestrictions));
-      setAlertsDismissed(false);
-    }
-  }, [staff, clients, allRestrictions]);
-
-  async function loadBaseData() {
-    const [staffRes, clientRes, restrictRes] = await Promise.all([
-      supabase
-        .from('staff')
-        .select('*, staff_availability(*)')
-        .eq('is_active', true)
-        .order('priority_tier')
-        .order('name'),
-      supabase
-        .from('clients')
-        .select('*, client_attendance(*), client_availability(*)')
-        .eq('is_active', true)
-        .order('first_name'),
-      supabase.from('staff_client_restrictions').select('*'),
-    ]);
-    // Supabase returns nested joins keyed by table name (staff_availability, client_availability,
-    // client_attendance). Map them to the interface property names the scheduler expects.
-    setStaff(
-      (staffRes.data ?? []).map((s: any) => ({ ...s, availability: s.staff_availability }))
-    );
-    setClients(
-      (clientRes.data ?? []).map((c: any) => ({
-        ...c,
-        availability: c.client_availability,
-        attendance: c.client_attendance,
-      }))
-    );
-    setAllRestrictions(restrictRes.data ?? []);
-  }
-
-  async function loadSchedule() {
-    setLoading(true);
-    const weekStr = format(currentMonday, 'yyyy-MM-dd');
-    const { data: sched } = await supabase
-      .from('schedules')
-      .select('*')
-      .eq('week_start_date', weekStr)
-      .maybeSingle();
-
-    if (sched) {
-      setSchedule(sched);
-      const { data: assignData } = await supabase
-        .from('schedule_assignments')
-        .select('*, staff(*,staff_availability(*)), client:clients(*,client_attendance(*),client_availability(*))')
-        .eq('schedule_id', sched.id);
-      const loaded = (assignData ?? []).map((a: any) => ({
-        ...a,
-        staff: a.staff
-          ? { ...a.staff, availability: a.staff.staff_availability }
-          : undefined,
-        client: a.client
-          ? { ...a.client, availability: a.client.client_availability, attendance: a.client.client_attendance }
-          : undefined,
-      }));
-      setAssignments(loaded);
-      await loadSessionNotes(loaded.map((a: ScheduleAssignment) => a.id));
-    } else {
-      setSchedule(null);
-      setAssignments([]);
-      setSessionNotes([]);
-    }
-    setLoading(false);
-  }
-
-  async function loadSessionNotes(assignmentIds: string[]) {
-    if (!assignmentIds.length) return;
-    const { data } = await supabase
-      .from('session_notes')
-      .select('*')
-      .in('assignment_id', assignmentIds);
-    setSessionNotes(data ?? []);
-  }
-
-  async function handleToggleNote(assignmentId: string) {
-    const existing = sessionNotes.find((n) => n.assignment_id === assignmentId);
-    if (existing) {
-      await supabase
-        .from('session_notes')
-        .update({ submitted: !existing.submitted, submitted_at: !existing.submitted ? new Date().toISOString() : null })
-        .eq('id', existing.id);
-    } else {
-      await supabase
-        .from('session_notes')
-        .insert({ assignment_id: assignmentId, submitted: true, submitted_at: new Date().toISOString() });
-    }
-    await loadSessionNotes(assignments.map((a) => a.id));
-  }
 
   async function generateSchedule() {
     if (staff.length === 0 || clients.length === 0) {
@@ -181,6 +82,7 @@ export function SchedulePage() {
       if (existing) {
         scheduleId = existing.id;
         await supabase.from('schedule_assignments').delete().eq('schedule_id', scheduleId);
+        await supabase.from('schedules').update({ status: 'draft' }).eq('id', scheduleId);
       } else {
         const { data: newSched, error } = await supabase
           .from('schedules')
@@ -195,7 +97,7 @@ export function SchedulePage() {
       if (generated.length > 0) {
         await supabase.from('schedule_assignments').insert(generated);
       }
-      await loadSchedule();
+      await refreshSchedule();
       showToast('Schedule generated.');
     } catch (err) {
       showToast('Failed to generate schedule. Please try again.', 'error');
@@ -204,22 +106,17 @@ export function SchedulePage() {
     }
   }
 
-  async function handleUpdateAssignment(assignmentId: string, staffId: string | null) {
-    await supabase
-      .from('schedule_assignments')
-      .update({ staff_id: staffId, is_manual_override: true, violation_reason: null })
-      .eq('id', assignmentId);
-    await loadSchedule();
-  }
-
   async function publishSchedule() {
     if (!schedule) return;
-    const { error } = await supabase.from('schedules').update({ status: 'published' }).eq('id', schedule.id);
+    const { error } = await supabase
+      .from('schedules')
+      .update({ status: 'published' })
+      .eq('id', schedule.id);
     if (error) {
       showToast('Failed to publish schedule.', 'error');
     } else {
       showToast('Schedule published.');
-      await loadSchedule();
+      await refreshSchedule();
     }
   }
 
@@ -244,6 +141,7 @@ export function SchedulePage() {
     clients,
     sessionNotes,
     onUpdateAssignment: handleUpdateAssignment,
+    onMoveAssignment: handleMoveAssignment,
     onToggleNote: handleToggleNote,
   };
 
@@ -253,23 +151,38 @@ export function SchedulePage() {
         {/* Week nav */}
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-2">
-            <button onClick={() => setCurrentMonday((p) => addDays(p, -7))} className="p-2 rounded-lg hover:bg-slate-100 text-slate-600 transition-colors">
+            <button
+              onClick={() => setCurrentMonday((p) => addDays(p, -7))}
+              className="p-2 rounded-lg hover:bg-slate-100 text-slate-600 transition-colors"
+            >
               <ChevronLeft size={18} />
             </button>
             <div className="text-center">
-              <div className="font-semibold text-slate-900 text-sm">{formatWeekRange(currentMonday)}</div>
-              <button onClick={() => setCurrentMonday(getMonday(new Date()))} className="text-xs text-aqua-500 hover:text-aqua-600 transition-colors">
+              <div className="font-semibold text-slate-900 text-sm">{weekLabel}</div>
+              <button
+                onClick={() => setCurrentMonday(getMonday(new Date()))}
+                className="text-xs text-aqua-500 hover:text-aqua-600 transition-colors"
+              >
                 This week
               </button>
             </div>
-            <button onClick={() => setCurrentMonday((p) => addDays(p, 7))} className="p-2 rounded-lg hover:bg-slate-100 text-slate-600 transition-colors">
+            <button
+              onClick={() => setCurrentMonday((p) => addDays(p, 7))}
+              className="p-2 rounded-lg hover:bg-slate-100 text-slate-600 transition-colors"
+            >
               <ChevronRight size={18} />
             </button>
           </div>
 
           <div className="flex items-center gap-2">
             {schedule && (
-              <span className={`px-2.5 py-1 rounded-full text-xs font-semibold ${schedule.status === 'published' ? 'bg-aqua-100 text-aqua-600' : 'bg-amber-100 text-amber-700'}`}>
+              <span
+                className={`px-2.5 py-1 rounded-full text-xs font-semibold ${
+                  schedule.status === 'published'
+                    ? 'bg-aqua-100 text-aqua-600'
+                    : 'bg-amber-100 text-amber-700'
+                }`}
+              >
                 {schedule.status === 'published' ? 'Published' : 'Draft'}
               </span>
             )}
@@ -279,7 +192,10 @@ export function SchedulePage() {
               </span>
             )}
             {schedule && schedule.status !== 'published' && (
-              <button onClick={publishSchedule} className="flex items-center gap-1.5 px-3 py-2 bg-aqua-50 hover:bg-aqua-100 text-aqua-600 rounded-lg text-sm font-semibold transition-colors">
+              <button
+                onClick={publishSchedule}
+                className="flex items-center gap-1.5 px-3 py-2 bg-aqua-50 hover:bg-aqua-100 text-aqua-600 rounded-lg text-sm font-semibold transition-colors"
+              >
                 <CheckCircle2 size={15} /> Publish
               </button>
             )}
@@ -305,13 +221,20 @@ export function SchedulePage() {
                 </div>
                 <div className="flex flex-wrap gap-2">
                   {ratioAlerts.map((alert, i) => (
-                    <span key={i} className="px-2.5 py-1 bg-red-100 text-red-700 rounded-lg text-xs font-medium">
-                      {DAY_NAMES[alert.day]} {alert.shift} — {alert.clientCount} clients, {alert.eligibleStaffCount} eligible staff (−{alert.deficit})
+                    <span
+                      key={i}
+                      className="px-2.5 py-1 bg-red-100 text-red-700 rounded-lg text-xs font-medium"
+                    >
+                      {DAY_NAMES[alert.day]} {alert.shift} — {alert.clientCount} clients,{' '}
+                      {alert.eligibleStaffCount} eligible staff (−{alert.deficit})
                     </span>
                   ))}
                 </div>
               </div>
-              <button onClick={() => setAlertsDismissed(true)} className="text-red-400 hover:text-red-600 transition-colors flex-shrink-0 mt-0.5">
+              <button
+                onClick={() => setAlertsDismissed(true)}
+                className="text-red-400 hover:text-red-600 transition-colors flex-shrink-0 mt-0.5"
+              >
                 <X size={16} />
               </button>
             </div>
@@ -325,7 +248,9 @@ export function SchedulePage() {
               key={tab.id}
               onClick={() => setViewMode(tab.id as ViewMode)}
               className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
-                viewMode === tab.id ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+                viewMode === tab.id
+                  ? 'bg-white text-slate-900 shadow-sm'
+                  : 'text-slate-500 hover:text-slate-700'
               }`}
             >
               {tab.icon} {tab.label}
@@ -341,26 +266,29 @@ export function SchedulePage() {
           <div className="bg-white rounded-2xl border border-slate-200 flex flex-col items-center justify-center py-20 text-center">
             <CalendarDays size={40} className="text-slate-300 mb-4" />
             <h3 className="font-semibold text-slate-700 mb-1">No schedule for this week</h3>
-            <p className="text-slate-400 text-sm mb-5">Click Auto-Generate to build the schedule automatically.</p>
-            <button onClick={generateSchedule} disabled={generating} className="flex items-center gap-2 px-5 py-2.5 bg-accent-500 hover:bg-accent-600 text-white rounded-xl text-sm font-semibold disabled:opacity-60">
+            <p className="text-slate-400 text-sm mb-5">
+              Click Auto-Generate to build the schedule automatically.
+            </p>
+            <button
+              onClick={generateSchedule}
+              disabled={generating}
+              className="flex items-center gap-2 px-5 py-2.5 bg-accent-500 hover:bg-accent-600 text-white rounded-xl text-sm font-semibold disabled:opacity-60"
+            >
               <Wand2 size={16} /> {generating ? 'Generating…' : 'Auto-Generate Schedule'}
             </button>
           </div>
         ) : viewMode === 'timeline' ? (
           <TimelineGrid {...sharedProps} />
         ) : viewMode === 'daily' ? (
-          <DailyView
-            {...sharedProps}
-            day={selectedDay}
-            onDayChange={setSelectedDay}
-          />
+          <DailyView {...sharedProps} day={selectedDay} onDayChange={setSelectedDay} />
         ) : viewMode === 'grid' ? (
           <WeeklyGrid
             assignments={assignments}
             staff={staff}
             clients={clients}
             onUpdateAssignment={handleUpdateAssignment}
-            weekLabel={formatWeekRange(currentMonday)}
+            onMoveAssignment={handleMoveAssignment}
+            weekLabel={weekLabel}
           />
         ) : viewMode === 'staff' ? (
           <StaffView staff={staff} assignments={assignments} />
@@ -385,15 +313,21 @@ export function SchedulePage() {
               </div>
               <div className="flex items-center justify-between">
                 <span className="text-slate-500">Unassigned</span>
-                <span className={`font-semibold ${unassignedCount > 0 ? 'text-amber-600' : 'text-slate-400'}`}>{unassignedCount}</span>
+                <span className={`font-semibold ${unassignedCount > 0 ? 'text-amber-600' : 'text-slate-400'}`}>
+                  {unassignedCount}
+                </span>
               </div>
               <div className="flex items-center justify-between">
                 <span className="text-slate-500">Violations</span>
-                <span className={`font-semibold ${violationCount > 0 ? 'text-red-600' : 'text-aqua-500'}`}>{violationCount}</span>
+                <span className={`font-semibold ${violationCount > 0 ? 'text-red-600' : 'text-aqua-500'}`}>
+                  {violationCount}
+                </span>
               </div>
               <div className="flex items-center justify-between">
                 <span className="text-slate-500">Manual overrides</span>
-                <span className="font-semibold text-blue-600">{assignments.filter((a) => a.is_manual_override).length}</span>
+                <span className="font-semibold text-blue-600">
+                  {assignments.filter((a) => a.is_manual_override).length}
+                </span>
               </div>
               <div className="flex items-center justify-between border-t border-slate-100 pt-2 mt-2">
                 <span className="flex items-center gap-1 text-slate-500">
@@ -427,4 +361,13 @@ export function SchedulePage() {
       </div>
     </div>
   );
+}
+
+function getMonday(date: Date): Date {
+  const d = new Date(date);
+  const day = d.getDay();
+  const diff = day === 0 ? -6 : 1 - day;
+  d.setDate(d.getDate() + diff);
+  d.setHours(0, 0, 0, 0);
+  return d;
 }
