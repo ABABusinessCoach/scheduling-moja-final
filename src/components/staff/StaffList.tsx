@@ -1,15 +1,15 @@
 import React, { useEffect, useState } from 'react';
 import { supabase } from '../../lib/supabase';
 import type { Staff, StaffAvailability, StaffClientRestriction, DayOfWeek } from '../../lib/types';
-import { DAY_SHORT } from '../../lib/types';
-import { Plus, Pencil, Trash2, User } from 'lucide-react';
+import { DAY_SHORT, PRIORITY_LABELS } from '../../lib/types';
+import { Plus, Pencil, Trash2, User, ShieldAlert } from 'lucide-react';
 import { StaffForm } from './StaffForm';
 import { useToast } from '../../lib/toast';
 
-const TIER_LABELS: Record<number, { label: string; color: string }> = {
-  1: { label: 'Tier 1', color: 'bg-amber-100 text-amber-700' },
-  2: { label: 'Tier 2', color: 'bg-blue-100 text-blue-700' },
-  3: { label: 'Tier 3', color: 'bg-slate-100 text-slate-600' },
+const TIER_COLORS: Record<number, string> = {
+  1: 'bg-amber-100 text-amber-700',
+  2: 'bg-blue-100 text-blue-700',
+  3: 'bg-slate-100 text-slate-600',
 };
 
 export function StaffList() {
@@ -107,12 +107,10 @@ export function StaffList() {
             return (
               <div key={tier}>
                 <div className="flex items-center gap-2 mb-2">
-                  <span className={`px-2.5 py-0.5 rounded-full text-xs font-semibold ${TIER_LABELS[tier].color}`}>
-                    {TIER_LABELS[tier].label}
+                  <span className={`px-2.5 py-0.5 rounded-full text-xs font-semibold ${TIER_COLORS[tier]}`}>
+                    Priority {tier} — {PRIORITY_LABELS[tier as 1 | 2 | 3].title}
                   </span>
-                  <span className="text-xs text-slate-400">
-                    {tier === 1 ? 'OGs — hours first' : tier === 2 ? 'Ramping up' : 'Floater'}
-                  </span>
+                  <span className="text-xs text-slate-400">{PRIORITY_LABELS[tier as 1 | 2 | 3].description}</span>
                 </div>
                 <div className="grid gap-3">
                   {tierStaff.map((s) => {
@@ -174,6 +172,18 @@ export function StaffList() {
                               {(s.skills ?? []).map((skill) => (
                                 <span key={skill} className="text-xs text-aqua-700 bg-aqua-50 px-2 py-0.5 rounded-full border border-aqua-200">
                                   {skill}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+
+                          {/* Supervision indicator */}
+                          {(s.scheduling_rules ?? []).length > 0 && (
+                            <div className="flex flex-wrap gap-1.5 mt-2">
+                              {(s.scheduling_rules ?? []).map((rule) => (
+                                <span key={rule} className="flex items-center gap-1 text-xs text-orange-700 bg-orange-50 px-2 py-0.5 rounded-full border border-orange-200">
+                                  <ShieldAlert size={10} className="flex-shrink-0" />
+                                  {rule}
                                 </span>
                               ))}
                             </div>

@@ -2,11 +2,11 @@ export type EmploymentType = 'full-time' | 'part-time' | 'contractor';
 export type Gender = 'male' | 'female' | 'other';
 export type PriorityTier = 1 | 2 | 3;
 export type ShiftType = 'AM' | 'PM' | 'FULL' | 'CUSTOM';
-export type AvailabilityShift = 'AM' | 'PM' | 'FULL';
+export type AvailabilityShift = 'AM' | 'PM' | 'FULL' | 'EVE' | 'SAT_AM' | 'SAT_PM';
 export type ScheduleStatus = 'draft' | 'published';
 export type CancellationType = 'client' | 'staff';
-export type DayOfWeek = 1 | 2 | 3 | 4 | 5; // 1=Mon, 5=Fri
-export type AssignmentShift = 'AM' | 'PM';
+export type DayOfWeek = 1 | 2 | 3 | 4 | 5 | 6; // 1=Mon, 5=Fri, 6=Sat
+export type AssignmentShift = 'AM' | 'PM' | 'EVE' | 'SAT_AM' | 'SAT_PM';
 
 export const DAY_NAMES: Record<DayOfWeek, string> = {
   1: 'Monday',
@@ -14,6 +14,7 @@ export const DAY_NAMES: Record<DayOfWeek, string> = {
   3: 'Wednesday',
   4: 'Thursday',
   5: 'Friday',
+  6: 'Saturday',
 };
 
 export const DAY_SHORT: Record<DayOfWeek, string> = {
@@ -22,9 +23,9 @@ export const DAY_SHORT: Record<DayOfWeek, string> = {
   3: 'Wed',
   4: 'Thu',
   5: 'Fri',
+  6: 'Sat',
 };
 
-/** All recognised BT skills used for matching */
 export const ALL_SKILLS = [
   'Verbal Behavior',
   'DTT',
@@ -40,7 +41,6 @@ export const ALL_SKILLS = [
 
 export type Skill = (typeof ALL_SKILLS)[number];
 
-/** Standard 30-minute time slots for the clinic day (HH:MM format) */
 export const TIME_SLOTS: string[] = [
   '08:00', '08:30',
   '09:00', '09:30',
@@ -48,30 +48,80 @@ export const TIME_SLOTS: string[] = [
   '11:00', '11:30',
   '12:00', '12:30',
   '13:00', '13:30',
-  '14:00',
+  '14:00', '14:30',
+  '15:00', '15:30',
+  '16:00', '16:30',
+  '17:00', '17:30',
+  '18:00',
 ];
 
-/** Slots that are blocked for breaks — shown highlighted, no scheduling */
-export const BLOCKED_SLOTS: Record<string, string> = {
-  '10:00': 'Break',
-  '12:00': 'Lunch',
+export const ALL_END_TIMES: string[] = [
+  '08:30', '09:00', '09:30', '10:00', '10:30',
+  '11:00', '11:30', '12:00', '12:30', '13:00', '13:30',
+  '14:00', '14:30', '15:00', '15:30', '16:00', '16:30',
+  '17:00', '17:30', '18:00',
+];
+
+export const AVAILABILITY_PRESETS: Record<AvailabilityShift, { start: string; end: string; label: string }> = {
+  AM:     { start: '08:00', end: '10:30', label: 'AM (8:00–10:30)' },
+  PM:     { start: '10:30', end: '14:30', label: 'PM (10:30–2:30)' },
+  FULL:   { start: '08:00', end: '14:30', label: 'Full Day (8:00–2:30)' },
+  EVE:    { start: '15:00', end: '18:00', label: 'After School (3:00–6:00)' },
+  SAT_AM: { start: '09:00', end: '12:00', label: 'Sat AM (9:00–12:00)' },
+  SAT_PM: { start: '12:00', end: '15:00', label: 'Sat PM (12:00–3:00)' },
 };
 
-/** Preset availability windows keyed by label */
-export const AVAILABILITY_PRESETS: Record<AvailabilityShift, { start: string; end: string }> = {
-  AM:   { start: '08:00', end: '10:30' },
-  PM:   { start: '10:30', end: '14:30' },
-  FULL: { start: '08:00', end: '14:30' },
+/** Human-readable labels for AssignmentShift values */
+export const SHIFT_LABELS: Record<AssignmentShift, string> = {
+  AM:     'AM (8:00–10:30)',
+  PM:     'PM (10:30–2:30)',
+  EVE:    'After School (3:00–6:00)',
+  SAT_AM: 'Saturday AM',
+  SAT_PM: 'Saturday PM',
 };
 
-/** Duration in hours between two HH:MM strings */
+/** Priority tier labels for scheduling */
+export const PRIORITY_LABELS: Record<1 | 2 | 3, { title: string; description: string }> = {
+  1: { title: 'Primary',   description: 'Full-time — scheduled first, hours filled before others' },
+  2: { title: 'Secondary', description: 'Part-time — scheduled after Primary staff' },
+  3: { title: 'Floater',   description: 'On-call / substitute — fills remaining gaps' },
+};
+
+/** Scheduling rule types that can be applied per staff member */
+export const RULE_PRESETS = [
+  '1:1 ratio only',
+  'No more than 2 clients per shift',
+  'No more than 3 clients per shift',
+  'Requires direct supervision',
+  'No PM sessions',
+  'No AM sessions',
+  'No After School sessions',
+  'Weekdays only',
+  'Cannot float between clients mid-shift',
+] as const;
+
+export const SHIFT_TIMES: Record<AssignmentShift, { start: string; end: string; hours: number }> = {
+  AM:     { start: '08:00', end: '10:30', hours: 2.5 },
+  PM:     { start: '10:30', end: '14:30', hours: 4.0 },
+  EVE:    { start: '15:00', end: '18:00', hours: 3.0 },
+  SAT_AM: { start: '09:00', end: '12:00', hours: 3.0 },
+  SAT_PM: { start: '12:00', end: '15:00', hours: 3.0 },
+};
+
+export const SHIFT_DAYS: Record<AssignmentShift, DayOfWeek[]> = {
+  AM:     [1, 2, 3, 4, 5],
+  PM:     [1, 2, 3, 4, 5],
+  EVE:    [1, 2, 3, 4, 5],
+  SAT_AM: [6],
+  SAT_PM: [6],
+};
+
 export function slotDuration(start: string, end: string): number {
   const [sh, sm] = start.split(':').map(Number);
   const [eh, em] = end.split(':').map(Number);
   return (eh * 60 + em - (sh * 60 + sm)) / 60;
 }
 
-/** Returns true if window A fully contains window B */
 export function timeWindowCovers(
   aStart: string, aEnd: string,
   bStart: string, bEnd: string
@@ -79,7 +129,6 @@ export function timeWindowCovers(
   return aStart <= bStart && aEnd >= bEnd;
 }
 
-/** Human-readable label for a time string like "08:00" → "8:00 AM" */
 export function formatTime(t: string): string {
   const [hStr, mStr] = t.split(':');
   let h = parseInt(hStr, 10);
@@ -90,14 +139,33 @@ export function formatTime(t: string): string {
   return `${h}:${m} ${suffix}`;
 }
 
-export const SHIFT_TIMES: Record<AssignmentShift, { start: string; end: string; hours: number }> = {
-  AM: { start: '08:00', end: '10:30', hours: 2.5 },
-  PM: { start: '10:30', end: '14:30', hours: 4.0 },
-};
-
 export interface RampUpEntry {
   week_number: number;
   target_hours: number;
+}
+
+export interface ShiftDefinition {
+  id: string;
+  name: string;
+  label: string;
+  time_start: string;
+  time_end: string;
+  days: number[];
+  color: string;
+  sort_order: number;
+  is_active: boolean;
+  created_at: string;
+}
+
+export interface BreakTime {
+  id: string;
+  name: string;
+  time_start: string;
+  time_end: string;
+  days: number[];
+  is_active: boolean;
+  sort_order: number;
+  created_at: string;
 }
 
 export interface Staff {
@@ -113,6 +181,7 @@ export interface Staff {
   skills: string[];
   supervision_hours_required: number;
   supervision_hours_this_week: number;
+  scheduling_rules: string[];
   availability?: StaffAvailability[];
   restrictions?: StaffClientRestriction[];
 }
@@ -122,8 +191,8 @@ export interface StaffAvailability {
   staff_id: string;
   day_of_week: DayOfWeek;
   shift: AvailabilityShift;
-  time_start: string | null; // e.g. '08:00'
-  time_end: string | null;   // e.g. '14:30'
+  time_start: string | null;
+  time_end: string | null;
 }
 
 export interface Client {
@@ -155,8 +224,8 @@ export interface ClientAvailability {
   client_id: string;
   day_of_week: DayOfWeek;
   shift: AvailabilityShift;
-  time_start: string | null; // e.g. '08:00'
-  time_end: string | null;   // e.g. '14:30'
+  time_start: string | null;
+  time_end: string | null;
 }
 
 export interface StaffClientRestriction {
@@ -180,8 +249,8 @@ export interface ScheduleAssignment {
   schedule_id: string;
   day_of_week: DayOfWeek;
   shift: AssignmentShift;
-  time_start: string | null; // e.g. '08:00'
-  time_end: string | null;   // e.g. '10:30'
+  time_start: string | null;
+  time_end: string | null;
   staff_id: string | null;
   client_id: string;
   is_manual_override: boolean;
@@ -223,7 +292,6 @@ export interface StaffHours {
   status: 'under' | 'at' | 'over';
 }
 
-/** Represents a staffing gap alert: a day+shift where clients > eligible staff */
 export interface RatioAlert {
   day: DayOfWeek;
   shift: AssignmentShift;

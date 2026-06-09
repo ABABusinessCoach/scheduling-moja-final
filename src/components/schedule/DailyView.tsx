@@ -6,10 +6,10 @@ import type {
   DayOfWeek,
   AssignmentShift,
   SessionNote,
+  BreakTime,
 } from '../../lib/types';
 import {
   TIME_SLOTS,
-  BLOCKED_SLOTS,
   DAY_NAMES,
   DAY_SHORT,
   formatTime,
@@ -25,12 +25,15 @@ interface DailyViewProps {
   staff: Staff[];
   clients: Client[];
   sessionNotes: SessionNote[];
+  breakTimes?: BreakTime[];
   onUpdateAssignment: (id: string, staffId: string | null) => void;
   onMoveAssignment: (id: string, day: DayOfWeek, shift: AssignmentShift) => void;
+  onDeleteAssignment?: (id: string) => void;
+  onUpdateEndTime?: (id: string, newEndTime: string) => void;
   onToggleNote: (assignmentId: string) => void;
 }
 
-const DAYS: DayOfWeek[] = [1, 2, 3, 4, 5];
+const WEEKDAYS: DayOfWeek[] = [1, 2, 3, 4, 5];
 
 function addThirtyMin(t: string): string {
   const [h, m] = t.split(':').map(Number);
@@ -41,6 +44,7 @@ function addThirtyMin(t: string): string {
 function slotShift(s: string): AssignmentShift | null {
   if (s >= '08:00' && s < '10:30') return 'AM';
   if (s >= '10:30' && s < '14:30') return 'PM';
+  if (s >= '15:00' && s < '18:00') return 'EVE';
   return null;
 }
 
@@ -67,8 +71,11 @@ export function DailyView({
   staff,
   clients,
   sessionNotes,
+  breakTimes = [],
   onUpdateAssignment,
   onMoveAssignment,
+  onDeleteAssignment,
+  onUpdateEndTime,
   onToggleNote,
 }: DailyViewProps) {
   const [editingCell, setEditingCell] = React.useState<string | null>(null);
@@ -93,17 +100,27 @@ export function DailyView({
     return map;
   }, [sessionNotes]);
 
+  const activeBreaks = breakTimes.filter((b) => b.is_active);
+
+  function isBlockedSlot(slotStart: string): string | null {
+    const slotEnd = addThirtyMin(slotStart);
+    for (const b of activeBreaks) {
+      if (b.days.length > 0 && !b.days.includes(day)) continue;
+      if (b.time_start.slice(0, 5) <= slotStart && b.time_end.slice(0, 5) >= slotEnd) {
+        return b.name;
+      }
+    }
+    return null;
+  }
+
   const dayClients = clients.filter((c) => {
     if (!c.is_active) return false;
     const avail = c.availability ?? [];
-    if (avail.length > 0) {
-      return avail.some((a) => a.day_of_week === day);
-    }
+    if (avail.length > 0) return avail.some((a) => a.day_of_week === day);
     return (c.attendance ?? []).some((a) => a.day_of_week === day);
   });
 
-  // Other days for dragging to a different day
-  const otherDays = DAYS.filter((d) => d !== day);
+  const otherDays = WEEKDAYS.filter((d) => d !== day);
 
   if (!dayClients.length) {
     return (
@@ -137,12 +154,11 @@ export function DailyView({
     <div ref={containerRef}>
       <div className="flex items-center gap-3 flex-wrap">
         <DayPicker day={day} onChange={onDayChange} />
-        {/* Drop zones for other days */}
         {draggingId && (
           <div className="flex items-center gap-2 ml-2">
             <span className="text-xs text-slate-400">Move to:</span>
-            {otherDays.map((d) => (
-              ['AM', 'PM'].map((sh) => (
+            {otherDays.flatMap((d) =>
+              (['AM', 'PM'] as AssignmentShift[]).map((sh) => (
                 <div
                   key={`${d}-${sh}`}
                   className={`px-3 py-1.5 rounded-lg text-xs font-semibold border-2 border-dashed transition-colors cursor-copy ${
@@ -152,12 +168,12 @@ export function DailyView({
                   }`}
                   onDragOver={(e) => { e.preventDefault(); setDragOver(`day-${d}-${sh}`); }}
                   onDragLeave={() => setDragOver(null)}
-                  onDrop={(e) => handleDrop(e, d, sh as AssignmentShift)}
+                  onDrop={(e) => handleDrop(e, d, sh)}
                 >
                   {DAY_SHORT[d]} {sh}
                 </div>
               ))
-            ))}
+            )}
           </div>
         )}
       </div>
@@ -179,8 +195,8 @@ export function DailyView({
           </div>
 
           {TIME_SLOTS.map((slotStart, idx) => {
-            const isBlocked = !!BLOCKED_SLOTS[slotStart];
-            const blockLabel = BLOCKED_SLOTS[slotStart];
+            const blockLabel = isBlockedSlot(slotStart);
+            const isBlocked = !!blockLabel;
             const isLastSlot = idx === TIME_SLOTS.length - 1;
 
             return (
@@ -228,8 +244,8 @@ export function DailyView({
                     if (c.no_male_therapists && s.gender === 'male') return false;
                     const shift = slotShift(slotStart);
                     if (!shift) return false;
-                    const shiftStart = SHIFT_TIMES[shift].start;
-                    const shiftEnd = SHIFT_TIMES[shift].end;
+                    const shiftStart = SHIFT_TIMES[shift]?.start ?? slotStart;
+                    const shiftEnd = SHIFT_TIMES[shift]?.end ?? addThirtyMin(slotStart);
                     const avail = s.availability ?? [];
                     return avail.some((av) => {
                       if (av.day_of_week !== day) return false;
@@ -318,18 +334,28 @@ export function DailyView({
                             </button>
                           ))}
                           <div className="border-t border-slate-100 mt-1 pt-1 px-3 py-1.5 text-xs text-slate-400 font-medium">Move to day</div>
-                          {DAYS.filter((d) => d !== day).map((d) => (
-                            ['AM', 'PM'].map((sh) => (
+                          {WEEKDAYS.filter((d) => d !== day).flatMap((d) =>
+                            (['AM', 'PM'] as AssignmentShift[]).map((sh) => (
                               <button
                                 key={`${d}-${sh}`}
-                                onClick={() => { onMoveAssignment(a.id, d, sh as AssignmentShift); setEditingCell(null); }}
+                                onClick={() => { onMoveAssignment(a.id, d, sh); setEditingCell(null); }}
                                 className="w-full text-left px-3 py-2 text-xs text-slate-700 hover:bg-aqua-50 flex items-center gap-1"
                               >
                                 <Clock size={10} className="text-slate-400" />
                                 {DAY_SHORT[d]} – {sh}
                               </button>
                             ))
-                          ))}
+                          )}
+                          {onDeleteAssignment && (
+                            <div className="border-t border-slate-100 mt-1 pt-1">
+                              <button
+                                onClick={() => { onDeleteAssignment(a.id); setEditingCell(null); }}
+                                className="w-full text-left px-3 py-2 text-xs text-red-600 hover:bg-red-50"
+                              >
+                                Remove session
+                              </button>
+                            </div>
+                          )}
                         </div>
                       )}
                     </div>
@@ -347,7 +373,7 @@ export function DailyView({
 function DayPicker({ day, onChange }: { day: DayOfWeek; onChange: (d: DayOfWeek) => void }) {
   return (
     <div className="flex rounded-xl bg-slate-100 p-1 w-fit">
-      {DAYS.map((d) => (
+      {WEEKDAYS.map((d) => (
         <button
           key={d}
           onClick={() => onChange(d)}

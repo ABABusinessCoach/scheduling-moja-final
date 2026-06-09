@@ -6,6 +6,7 @@ import {
   DayOfWeek,
   AssignmentShift,
   SHIFT_TIMES,
+  SHIFT_DAYS,
   StaffHours,
   RatioAlert,
   slotDuration,
@@ -34,10 +35,11 @@ function clientCanAttendShift(client: Client, day: DayOfWeek, shift: AssignmentS
   const avail = client.availability ?? [];
 
   if (avail.length === 0) {
-    // Legacy fallback: use client_attendance + shift_type
+    // Legacy fallback: use client_attendance + shift_type (weekday only)
+    if (day === 6) return false;
     const attendsDay = (client.attendance ?? []).some((a) => a.day_of_week === day);
     if (!attendsDay) return false;
-    if (client.shift_type === 'FULL') return true;
+    if (client.shift_type === 'FULL') return shift === 'AM' || shift === 'PM';
     if (client.shift_type === 'AM' && shift === 'AM') return true;
     if (client.shift_type === 'PM' && shift === 'PM') return true;
     if (client.shift_type === 'CUSTOM') return shift === 'AM';
@@ -124,7 +126,6 @@ export function generateWeeklySchedule(
   weekNumber = 1
 ): Omit<ScheduleAssignment, 'id' | 'created_at'>[] {
   const assignments: Omit<ScheduleAssignment, 'id' | 'created_at'>[] = [];
-  const days: DayOfWeek[] = [1, 2, 3, 4, 5];
   const activeStaff = staff.filter((s) => s.is_active);
   const activeClients = clients.filter((c) => c.is_active);
 
@@ -142,11 +143,14 @@ export function generateWeeklySchedule(
     bookedSlots.get(key)!.add(staffId);
   }
 
-  for (const day of days) {
-    for (const shift of ['AM', 'PM'] as AssignmentShift[]) {
-      const clientsForShift = activeClients.filter((c) => clientCanAttendShift(c, day, shift));
+  const ALL_SHIFTS: AssignmentShift[] = ['AM', 'PM', 'EVE', 'SAT_AM', 'SAT_PM'];
 
-      const sessionWindow = shiftTimes(shift);
+  for (const shift of ALL_SHIFTS) {
+    const applicableDays = SHIFT_DAYS[shift];
+    const sessionWindow = shiftTimes(shift);
+
+    for (const day of applicableDays) {
+      const clientsForShift = activeClients.filter((c) => clientCanAttendShift(c, day, shift));
 
       for (const client of clientsForShift) {
         // Ramp-up / authorized hours cap — skip session if client is already at their weekly cap
@@ -273,12 +277,12 @@ export function computeRatioAlerts(
   allRestrictions: StaffClientRestriction[]
 ): RatioAlert[] {
   const alerts: RatioAlert[] = [];
-  const days: DayOfWeek[] = [1, 2, 3, 4, 5];
   const activeStaff = staff.filter((s) => s.is_active);
   const activeClients = clients.filter((c) => c.is_active);
+  const ALL_SHIFTS: AssignmentShift[] = ['AM', 'PM', 'EVE', 'SAT_AM', 'SAT_PM'];
 
-  for (const day of days) {
-    for (const shift of ['AM', 'PM'] as AssignmentShift[]) {
+  for (const shift of ALL_SHIFTS) {
+    for (const day of SHIFT_DAYS[shift]) {
       const clientsForShift = activeClients.filter((c) => clientCanAttendShift(c, day, shift));
 
       if (!clientsForShift.length) continue;

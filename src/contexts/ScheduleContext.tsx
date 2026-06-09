@@ -10,8 +10,11 @@ import type {
   RatioAlert,
   DayOfWeek,
   AssignmentShift,
+  ShiftDefinition,
+  BreakTime,
 } from '../lib/types';
 import { computeRatioAlerts } from '../lib/scheduler';
+import { SHIFT_TIMES } from '../lib/types';
 import { getMonday, format, formatWeekRange } from '../lib/dateUtils';
 
 interface ScheduleContextType {
@@ -25,11 +28,17 @@ interface ScheduleContextType {
   assignments: ScheduleAssignment[];
   sessionNotes: SessionNote[];
   ratioAlerts: RatioAlert[];
+  shifts: ShiftDefinition[];
+  breakTimes: BreakTime[];
   loading: boolean;
   refreshSchedule: () => Promise<void>;
+  refreshShiftsAndBreaks: () => Promise<void>;
   setScheduleData: (s: Schedule | null) => void;
   handleUpdateAssignment: (assignmentId: string, staffId: string | null) => Promise<void>;
+  handleInsertAssignment: (day: DayOfWeek, shift: AssignmentShift, clientId: string, staffId: string) => Promise<void>;
   handleMoveAssignment: (assignmentId: string, newDay: DayOfWeek, newShift: AssignmentShift) => Promise<void>;
+  handleDeleteAssignment: (assignmentId: string) => Promise<void>;
+  handleUpdateEndTime: (assignmentId: string, newEndTime: string) => Promise<void>;
   handleToggleNote: (assignmentId: string) => Promise<void>;
 }
 
@@ -44,10 +53,11 @@ export function ScheduleProvider({ children }: { children: React.ReactNode }) {
   const [allRestrictions, setAllRestrictions] = useState<StaffClientRestriction[]>([]);
   const [sessionNotes, setSessionNotes] = useState<SessionNote[]>([]);
   const [ratioAlerts, setRatioAlerts] = useState<RatioAlert[]>([]);
+  const [shifts, setShifts] = useState<ShiftDefinition[]>([]);
+  const [breakTimes, setBreakTimes] = useState<BreakTime[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => { loadBaseData(); }, []);
-
   useEffect(() => { loadSchedule(); }, [currentMonday]);
 
   useEffect(() => {
@@ -57,7 +67,7 @@ export function ScheduleProvider({ children }: { children: React.ReactNode }) {
   }, [staff, clients, allRestrictions]);
 
   async function loadBaseData() {
-    const [staffRes, clientRes, restrictRes] = await Promise.all([
+    const [staffRes, clientRes, restrictRes, shiftsRes, breaksRes] = await Promise.all([
       supabase
         .from('staff')
         .select('*, staff_availability(*)')
@@ -70,6 +80,8 @@ export function ScheduleProvider({ children }: { children: React.ReactNode }) {
         .eq('is_active', true)
         .order('first_name'),
       supabase.from('staff_client_restrictions').select('*'),
+      supabase.from('shifts').select('*').order('sort_order'),
+      supabase.from('break_times').select('*').order('sort_order'),
     ]);
     setStaff(
       (staffRes.data ?? []).map((s: any) => ({ ...s, availability: s.staff_availability }))
@@ -82,6 +94,8 @@ export function ScheduleProvider({ children }: { children: React.ReactNode }) {
       }))
     );
     setAllRestrictions(restrictRes.data ?? []);
+    setShifts(shiftsRes.data ?? []);
+    setBreakTimes(breaksRes.data ?? []);
   }
 
   const loadSchedule = useCallback(async () => {
@@ -101,15 +115,9 @@ export function ScheduleProvider({ children }: { children: React.ReactNode }) {
         .eq('schedule_id', sched.id);
       const loaded = (assignData ?? []).map((a: any) => ({
         ...a,
-        staff: a.staff
-          ? { ...a.staff, availability: a.staff.staff_availability }
-          : undefined,
+        staff: a.staff ? { ...a.staff, availability: a.staff.staff_availability } : undefined,
         client: a.client
-          ? {
-              ...a.client,
-              availability: a.client.client_availability,
-              attendance: a.client.client_attendance,
-            }
+          ? { ...a.client, availability: a.client.client_availability, attendance: a.client.client_attendance }
           : undefined,
       }));
       setAssignments(loaded);
@@ -123,10 +131,7 @@ export function ScheduleProvider({ children }: { children: React.ReactNode }) {
   }, [currentMonday]);
 
   async function loadSessionNotes(assignmentIds: string[]) {
-    if (!assignmentIds.length) {
-      setSessionNotes([]);
-      return;
-    }
+    if (!assignmentIds.length) { setSessionNotes([]); return; }
     const { data } = await supabase
       .from('session_notes')
       .select('*')
@@ -134,29 +139,79 @@ export function ScheduleProvider({ children }: { children: React.ReactNode }) {
     setSessionNotes(data ?? []);
   }
 
+  async function refreshShiftsAndBreaks() {
+    const [shiftsRes, breaksRes] = await Promise.all([
+      supabase.from('shifts').select('*').order('sort_order'),
+      supabase.from('break_times').select('*').order('sort_order'),
+    ]);
+    setShifts(shiftsRes.data ?? []);
+    setBreakTimes(breaksRes.data ?? []);
+  }
+
   async function handleUpdateAssignment(assignmentId: string, staffId: string | null) {
     await supabase
       .from('schedule_assignments')
       .update({ staff_id: staffId, is_manual_override: true, violation_reason: null })
       .eq('id', assignmentId);
-    await loadSchedule();
+    setAssignments((prev) =>
+      prev.map((a) =>
+        a.id === assignmentId ? { ...a, staff_id: staffId, is_manual_override: true, violation_reason: null } : a
+      )
+    );
   }
 
-  async function handleMoveAssignment(
-    assignmentId: string,
-    newDay: DayOfWeek,
-    newShift: AssignmentShift
-  ) {
-    await supabase
+  async function handleInsertAssignment(day: DayOfWeek, shift: AssignmentShift, clientId: string, staffId: string) {
+    if (!schedule) return;
+    const times = SHIFT_TIMES[shift];
+    const { data } = await supabase
       .from('schedule_assignments')
-      .update({
-        day_of_week: newDay,
-        shift: newShift,
+      .insert({
+        schedule_id: schedule.id,
+        day_of_week: day,
+        shift,
+        time_start: times.start,
+        time_end: times.end,
+        staff_id: staffId,
+        client_id: clientId,
         is_manual_override: true,
         violation_reason: null,
       })
+      .select('*, staff(*,staff_availability(*)), client:clients(*,client_attendance(*),client_availability(*))')
+      .single();
+    if (data) {
+      const mapped = {
+        ...data,
+        staff: data.staff ? { ...data.staff, availability: data.staff.staff_availability } : undefined,
+        client: data.client
+          ? { ...data.client, availability: data.client.client_availability, attendance: data.client.client_attendance }
+          : undefined,
+      };
+      setAssignments((prev) => [...prev, mapped]);
+    }
+  }
+
+  async function handleMoveAssignment(assignmentId: string, newDay: DayOfWeek, newShift: AssignmentShift) {
+    await supabase
+      .from('schedule_assignments')
+      .update({ day_of_week: newDay, shift: newShift, is_manual_override: true, violation_reason: null })
       .eq('id', assignmentId);
     await loadSchedule();
+  }
+
+  async function handleDeleteAssignment(assignmentId: string) {
+    await supabase.from('schedule_assignments').delete().eq('id', assignmentId);
+    setAssignments((prev) => prev.filter((a) => a.id !== assignmentId));
+    setSessionNotes((prev) => prev.filter((n) => n.assignment_id !== assignmentId));
+  }
+
+  async function handleUpdateEndTime(assignmentId: string, newEndTime: string) {
+    await supabase
+      .from('schedule_assignments')
+      .update({ time_end: newEndTime, is_manual_override: true })
+      .eq('id', assignmentId);
+    setAssignments((prev) =>
+      prev.map((a) => (a.id === assignmentId ? { ...a, time_end: newEndTime, is_manual_override: true } : a))
+    );
   }
 
   async function handleToggleNote(assignmentId: string) {
@@ -190,11 +245,17 @@ export function ScheduleProvider({ children }: { children: React.ReactNode }) {
         assignments,
         sessionNotes,
         ratioAlerts,
+        shifts,
+        breakTimes,
         loading,
         refreshSchedule: loadSchedule,
+        refreshShiftsAndBreaks,
         setScheduleData: setSchedule,
         handleUpdateAssignment,
+        handleInsertAssignment,
         handleMoveAssignment,
+        handleDeleteAssignment,
+        handleUpdateEndTime,
         handleToggleNote,
       }}
     >

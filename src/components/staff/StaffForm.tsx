@@ -13,11 +13,14 @@ import type {
 import {
   DAY_NAMES,
   TIME_SLOTS,
+  ALL_END_TIMES,
   AVAILABILITY_PRESETS,
   ALL_SKILLS,
+  PRIORITY_LABELS,
+  RULE_PRESETS,
   formatTime,
 } from '../../lib/types';
-import { X } from 'lucide-react';
+import { X, Plus, ShieldAlert } from 'lucide-react';
 
 interface StaffFormProps {
   staff?: Staff | null;
@@ -25,24 +28,35 @@ interface StaffFormProps {
   onCancel: () => void;
 }
 
-const DAYS: DayOfWeek[] = [1, 2, 3, 4, 5];
+const DAYS: DayOfWeek[] = [1, 2, 3, 4, 5, 6];
 
 interface DayWindow {
   day: DayOfWeek;
   enabled: boolean;
-  start: string; // HH:MM
-  end: string;   // HH:MM
+  start: string;
+  end: string;
 }
 
-/** All valid end times: every slot after the first one, plus 10:30 and 14:30 */
-const END_TIMES = [...TIME_SLOTS.slice(1), '10:30', '14:30']
-  .filter((v, i, a) => a.indexOf(v) === i)
-  .sort();
-
-function shiftFromWindow(start: string, end: string): AvailabilityShift {
+function shiftFromWindow(start: string, end: string, day: DayOfWeek): AvailabilityShift {
+  if (day === 6) {
+    if (end <= '12:00') return 'SAT_AM';
+    if (start >= '12:00') return 'SAT_PM';
+    return 'SAT_AM';
+  }
+  if (start >= '15:00') return 'EVE';
   if (start === '08:00' && end === '14:30') return 'FULL';
-  if (start <= '08:00' && end <= '10:30') return 'AM';
+  if (end <= '10:30') return 'AM';
   return 'PM';
+}
+
+function shiftBadge(start: string, end: string, day: DayOfWeek) {
+  if (!start || !end) return null;
+  if (day === 6) return { label: 'Saturday', color: 'bg-purple-100 text-purple-700' };
+  if (start >= '15:00') return { label: 'After School', color: 'bg-teal-100 text-teal-700' };
+  if (start === '08:00' && end === '14:30') return { label: 'Full Day', color: 'bg-aqua-100 text-aqua-700' };
+  if (end <= '10:30') return { label: 'AM', color: 'bg-amber-100 text-amber-700' };
+  if (start >= '10:30') return { label: 'PM', color: 'bg-blue-100 text-blue-700' };
+  return { label: 'Custom', color: 'bg-slate-100 text-slate-600' };
 }
 
 export function StaffForm({ staff, onSave, onCancel }: StaffFormProps) {
@@ -56,6 +70,8 @@ export function StaffForm({ staff, onSave, onCancel }: StaffFormProps) {
   const [isActive, setIsActive] = useState(staff?.is_active ?? true);
   const [notes, setNotes] = useState(staff?.notes ?? '');
   const [skills, setSkills] = useState<string[]>(staff?.skills ?? []);
+  const [schedulingRules, setSchedulingRules] = useState<string[]>(staff?.scheduling_rules ?? []);
+  const [newRuleText, setNewRuleText] = useState('');
   const [supervisionRequired, setSupervisionRequired] = useState(
     staff?.supervision_hours_required?.toString() ?? '0'
   );
@@ -65,9 +81,9 @@ export function StaffForm({ staff, onSave, onCancel }: StaffFormProps) {
 
   const defaultWindows: DayWindow[] = DAYS.map((d) => ({
     day: d,
-    enabled: true,
-    start: '08:00',
-    end: '14:30',
+    enabled: d !== 6,
+    start: d === 6 ? '09:00' : '08:00',
+    end: d === 6 ? '15:00' : '14:30',
   }));
 
   const [dayWindows, setDayWindows] = useState<DayWindow[]>(defaultWindows);
@@ -99,7 +115,7 @@ export function StaffForm({ staff, onSave, onCancel }: StaffFormProps) {
     const avail = availRes.data ?? [];
     const windows: DayWindow[] = DAYS.map((d) => {
       const row = avail.find((a: any) => a.day_of_week === d);
-      if (!row) return { day: d, enabled: false, start: '08:00', end: '14:30' };
+      if (!row) return { day: d, enabled: false, start: d === 6 ? '09:00' : '08:00', end: d === 6 ? '15:00' : '14:30' };
       const start = row.time_start ? row.time_start.slice(0, 5) : AVAILABILITY_PRESETS[row.shift as AvailabilityShift]?.start ?? '08:00';
       const end = row.time_end ? row.time_end.slice(0, 5) : AVAILABILITY_PRESETS[row.shift as AvailabilityShift]?.end ?? '14:30';
       return { day: d, enabled: true, start, end };
@@ -116,13 +132,20 @@ export function StaffForm({ staff, onSave, onCancel }: StaffFormProps) {
     setSkills((prev) => prev.includes(skill) ? prev.filter((s) => s !== skill) : [...prev, skill]);
   }
 
-  function applyPreset(preset: 'FULL' | 'AM' | 'PM' | 'ALL_DAYS') {
+  type PresetKey = 'AM' | 'PM' | 'FULL' | 'EVE' | 'ALL_DAYS';
+  function applyPreset(preset: PresetKey) {
     if (preset === 'ALL_DAYS') {
-      setDayWindows(DAYS.map((d) => ({ day: d, enabled: true, start: '08:00', end: '14:30' })));
+      setDayWindows(DAYS.map((d) => ({ day: d, enabled: d !== 6, start: d === 6 ? '09:00' : '08:00', end: d === 6 ? '15:00' : '14:30' })));
       return;
     }
     const { start, end } = AVAILABILITY_PRESETS[preset as AvailabilityShift];
-    setDayWindows((prev) => prev.map((w) => (w.enabled ? { ...w, start, end } : w)));
+    setDayWindows((prev) => prev.map((w) => {
+      if (!w.enabled) return w;
+      // EVE / After School applies to weekdays only
+      if (preset === 'EVE' && w.day === 6) return w;
+      if (w.day === 6) return w;
+      return { ...w, start, end };
+    }));
   }
 
   function toggleRestriction(clientId: string) {
@@ -131,58 +154,64 @@ export function StaffForm({ staff, onSave, onCancel }: StaffFormProps) {
     );
   }
 
+  function addRule(text: string) {
+    const trimmed = text.trim();
+    if (!trimmed || schedulingRules.includes(trimmed)) return;
+    setSchedulingRules((prev) => [...prev, trimmed]);
+    setNewRuleText('');
+  }
+
+  function removeRule(rule: string) {
+    setSchedulingRules((prev) => prev.filter((r) => r !== rule));
+  }
+
   async function handleSave(e: React.FormEvent) {
     e.preventDefault();
     setError('');
 
-    // Client-side validation
     const trimmedName = name.trim();
     if (!trimmedName) { setError('Name is required.'); return; }
     if (trimmedName.length > 100) { setError('Name must be 100 characters or fewer.'); return; }
 
     const parsedGoal = parseFloat(goalHours);
     if (isNaN(parsedGoal) || parsedGoal < 1 || parsedGoal > 60) {
-      setError('Weekly hour goal must be between 1 and 60.');
-      return;
+      setError('Weekly hour goal must be between 1 and 60.'); return;
     }
 
     const parsedSupReq = parseFloat(supervisionRequired) || 0;
     const parsedSupWeek = parseFloat(supervisionThisWeek) || 0;
-    if (parsedSupReq < 0 || parsedSupReq > 40) { setError('Supervision required must be between 0 and 40.'); return; }
-    if (parsedSupWeek < 0 || parsedSupWeek > 40) { setError('Supervision this week must be between 0 and 40.'); return; }
+    if (parsedSupReq < 0 || parsedSupReq > 40) { setError('Supervision required must be 0–40.'); return; }
+    if (parsedSupWeek < 0 || parsedSupWeek > 40) { setError('Supervision this week must be 0–40.'); return; }
 
     const trimmedNotes = notes.trim().slice(0, 500);
 
     setSaving(true);
-
     try {
       let staffId: string;
+      const payload = {
+        name: trimmedName,
+        employment_type: employment,
+        weekly_hour_goal: parsedGoal,
+        priority_tier: tier,
+        gender,
+        is_active: isActive,
+        notes: trimmedNotes,
+        skills,
+        scheduling_rules: schedulingRules,
+        supervision_hours_required: parsedSupReq,
+        supervision_hours_this_week: parsedSupWeek,
+      };
 
       if (isEdit && staff) {
-        const { error } = await supabase.from('staff').update({
-          name: trimmedName, employment_type: employment,
-          weekly_hour_goal: parsedGoal,
-          priority_tier: tier, gender, is_active: isActive, notes: trimmedNotes,
-          skills,
-          supervision_hours_required: parsedSupReq,
-          supervision_hours_this_week: parsedSupWeek,
-        }).eq('id', staff.id);
+        const { error } = await supabase.from('staff').update(payload).eq('id', staff.id);
         if (error) throw error;
         staffId = staff.id;
       } else {
-        const { data, error } = await supabase.from('staff').insert({
-          name: trimmedName, employment_type: employment,
-          weekly_hour_goal: parsedGoal,
-          priority_tier: tier, gender, is_active: isActive, notes: trimmedNotes,
-          skills,
-          supervision_hours_required: parsedSupReq,
-          supervision_hours_this_week: parsedSupWeek,
-        }).select().single();
+        const { data, error } = await supabase.from('staff').insert(payload).select().single();
         if (error) throw error;
         staffId = data.id;
       }
 
-      // Replace availability
       await supabase.from('staff_availability').delete().eq('staff_id', staffId);
       const enabledDays = dayWindows.filter((w) => w.enabled);
       if (enabledDays.length > 0) {
@@ -190,14 +219,13 @@ export function StaffForm({ staff, onSave, onCancel }: StaffFormProps) {
           enabledDays.map((w) => ({
             staff_id: staffId,
             day_of_week: w.day,
-            shift: shiftFromWindow(w.start, w.end),
+            shift: shiftFromWindow(w.start, w.end, w.day),
             time_start: w.start,
             time_end: w.end,
           }))
         );
       }
 
-      // Replace client restrictions
       await supabase.from('staff_client_restrictions').delete().eq('staff_id', staffId);
       if (restrictions.length > 0) {
         await supabase.from('staff_client_restrictions').insert(
@@ -210,15 +238,15 @@ export function StaffForm({ staff, onSave, onCancel }: StaffFormProps) {
       const msg = err instanceof Error ? err.message : '';
       if (msg.includes('duplicate') || msg.includes('unique')) {
         setError('A staff member with that name already exists.');
-      } else if (msg) {
-        setError('Failed to save. Please check your entries and try again.');
       } else {
-        setError('An unexpected error occurred. Please try again.');
+        setError('Failed to save. Please check your entries and try again.');
       }
     } finally {
       setSaving(false);
     }
   }
+
+  const tierInfo = PRIORITY_LABELS[tier];
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
@@ -233,7 +261,8 @@ export function StaffForm({ staff, onSave, onCancel }: StaffFormProps) {
         </div>
 
         <form onSubmit={handleSave} className="p-6 space-y-6">
-          {/* Basic info */}
+
+          {/* ── Basic Info ── */}
           <div className="grid grid-cols-2 gap-4">
             <div className="col-span-2">
               <label className="form-label">Full Name</label>
@@ -252,14 +281,6 @@ export function StaffForm({ staff, onSave, onCancel }: StaffFormProps) {
               <input className="form-input" type="number" min="1" max="60" step="0.5" value={goalHours} onChange={(e) => setGoalHours(e.target.value)} required />
             </div>
             <div>
-              <label className="form-label">Priority Tier</label>
-              <select className="form-input" value={tier} onChange={(e) => setTier(Number(e.target.value) as PriorityTier)}>
-                <option value={1}>Tier 1 — OG (Hours First)</option>
-                <option value={2}>Tier 2 — Ramping Up</option>
-                <option value={3}>Tier 3 — Floater</option>
-              </select>
-            </div>
-            <div>
               <label className="form-label">Gender</label>
               <select className="form-input" value={gender} onChange={(e) => setGender(e.target.value as Gender)}>
                 <option value="female">Female</option>
@@ -267,68 +288,113 @@ export function StaffForm({ staff, onSave, onCancel }: StaffFormProps) {
                 <option value="other">Other</option>
               </select>
             </div>
+            <div>
+              <label className="form-label">Status</label>
+              <select className="form-input" value={isActive ? 'active' : 'inactive'} onChange={(e) => setIsActive(e.target.value === 'active')}>
+                <option value="active">Active</option>
+                <option value="inactive">Inactive</option>
+              </select>
+            </div>
           </div>
 
-          {/* Availability time windows */}
+          {/* ── Priority ── */}
           <div>
-            <div className="flex items-center justify-between mb-3">
-              <label className="form-label mb-0">Availability — Time Windows</label>
-              <div className="flex gap-1.5">
-                {(['AM', 'PM', 'FULL'] as const).map((p) => (
+            <label className="form-label mb-3">Scheduling Priority</label>
+            <div className="grid grid-cols-3 gap-2">
+              {([1, 2, 3] as PriorityTier[]).map((t) => {
+                const info = PRIORITY_LABELS[t];
+                const isSelected = tier === t;
+                return (
+                  <button
+                    key={t}
+                    type="button"
+                    onClick={() => setTier(t)}
+                    className={`text-left p-3 rounded-xl border-2 transition-all ${
+                      isSelected
+                        ? 'border-accent-500 bg-accent-50'
+                        : 'border-slate-200 hover:border-slate-300 bg-white'
+                    }`}
+                  >
+                    <div className={`text-xs font-bold mb-0.5 ${isSelected ? 'text-accent-600' : 'text-slate-500'}`}>
+                      Priority {t}
+                    </div>
+                    <div className={`text-sm font-semibold ${isSelected ? 'text-accent-700' : 'text-slate-700'}`}>
+                      {info.title}
+                    </div>
+                    <div className="text-[11px] text-slate-400 mt-1 leading-snug">{info.description}</div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* ── Availability ── */}
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <label className="form-label mb-0">Availability</label>
+              <div className="flex gap-1">
+                {(['AM', 'PM', 'FULL', 'EVE'] as const).map((p) => (
                   <button
                     key={p}
                     type="button"
                     onClick={() => applyPreset(p)}
-                    className="px-2.5 py-1 rounded-lg text-xs font-medium bg-slate-100 hover:bg-slate-200 text-slate-600 transition-colors"
+                    className="px-2 py-1 rounded-lg text-xs font-medium bg-slate-100 hover:bg-slate-200 text-slate-600 transition-colors whitespace-nowrap"
                   >
-                    All → {p === 'FULL' ? 'Full Day' : p}
+                    {p === 'FULL' ? 'Full Day' : p === 'EVE' ? 'After School' : p}
                   </button>
                 ))}
                 <button
                   type="button"
                   onClick={() => applyPreset('ALL_DAYS')}
-                  className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-aqua-100 hover:bg-aqua-200 text-aqua-700 transition-colors"
+                  className="px-2 py-1 rounded-lg text-xs font-semibold bg-aqua-100 hover:bg-aqua-200 text-aqua-700 transition-colors"
                 >
-                  Reset All
+                  Reset
                 </button>
               </div>
             </div>
 
+            {/* Shift reference */}
+            <div className="grid grid-cols-4 gap-2 mb-3">
+              {[
+                { label: 'AM', time: '8:00 – 10:30', color: 'border-amber-200 bg-amber-50 text-amber-700' },
+                { label: 'PM', time: '10:30 – 2:30', color: 'border-blue-200 bg-blue-50 text-blue-700' },
+                { label: 'Full Day', time: '8:00 – 2:30', color: 'border-aqua-200 bg-aqua-50 text-aqua-700' },
+                { label: 'After School', time: '3:00 – 6:00', color: 'border-teal-200 bg-teal-50 text-teal-700' },
+              ].map((s) => (
+                <div key={s.label} className={`px-2 py-1.5 rounded-lg border text-center ${s.color}`}>
+                  <div className="text-xs font-semibold">{s.label}</div>
+                  <div className="text-[10px] opacity-80">{s.time}</div>
+                </div>
+              ))}
+            </div>
+
             <div className="border border-slate-200 rounded-xl overflow-hidden">
-              {/* Header */}
-              <div className="grid bg-slate-50 text-xs font-semibold text-slate-500 uppercase tracking-wide border-b border-slate-200"
-                style={{ gridTemplateColumns: '100px 56px 1fr 24px 1fr 100px' }}>
+              <div
+                className="grid bg-slate-50 text-xs font-semibold text-slate-500 uppercase tracking-wide border-b border-slate-200"
+                style={{ gridTemplateColumns: '90px 48px 1fr 20px 1fr 90px' }}
+              >
                 <div className="px-3 py-2.5">Day</div>
                 <div className="px-2 py-2.5 text-center">On</div>
                 <div className="px-3 py-2.5">Start</div>
-                <div className="py-2.5 text-center text-slate-300">–</div>
+                <div className="py-2.5" />
                 <div className="px-3 py-2.5">End</div>
-                <div className="px-3 py-2.5 text-right">Duration</div>
+                <div className="px-3 py-2.5 text-right">Shift</div>
               </div>
 
               {DAYS.map((day) => {
                 const w = dayWindows.find((x) => x.day === day)!;
-                const validEnd = TIME_SLOTS.filter((t) => t > w.start);
-                const extraEnds = ['10:30', '14:30'].filter(
-                  (t) => t > w.start && !validEnd.includes(t)
-                );
-                const endOptions = [...validEnd, ...extraEnds].sort();
-                const durH = w.enabled
-                  ? (() => {
-                      const [sh, sm] = w.start.split(':').map(Number);
-                      const [eh, em] = w.end.split(':').map(Number);
-                      const mins = eh * 60 + em - (sh * 60 + sm);
-                      const h = Math.floor(mins / 60);
-                      const m = mins % 60;
-                      return m ? `${h}h ${m}m` : `${h}h`;
-                    })()
-                  : null;
+                const validEnd = ALL_END_TIMES.filter((t) => t > w.start);
+                const badge = w.enabled ? shiftBadge(w.start, w.end, day) : null;
+
+                // Warn if window spans the clinic-closed gap (14:30–15:00)
+                const spansGap = w.enabled && w.start < '14:30' && w.end > '14:30' && w.end <= '15:00';
+                const crossesGap = w.enabled && w.start < '14:30' && w.end > '15:00';
 
                 return (
                   <div
                     key={day}
-                    className={`grid border-b border-slate-100 last:border-b-0 ${!w.enabled ? 'bg-slate-50/60 opacity-60' : ''}`}
-                    style={{ gridTemplateColumns: '100px 56px 1fr 24px 1fr 100px' }}
+                    className={`grid border-b border-slate-100 last:border-b-0 ${!w.enabled ? 'bg-slate-50/60 opacity-50' : ''}`}
+                    style={{ gridTemplateColumns: '90px 48px 1fr 20px 1fr 90px' }}
                   >
                     <div className="px-3 py-3 text-sm font-medium text-slate-700 flex items-center">
                       {DAY_NAMES[day].slice(0, 3)}
@@ -337,9 +403,9 @@ export function StaffForm({ staff, onSave, onCancel }: StaffFormProps) {
                       <button
                         type="button"
                         onClick={() => updateWindow(day, { enabled: !w.enabled })}
-                        className={`w-9 h-5 rounded-full transition-colors relative flex-shrink-0 ${w.enabled ? 'bg-aqua-300' : 'bg-slate-200'}`}
+                        className={`w-9 h-5 rounded-full transition-colors relative flex-shrink-0 ${w.enabled ? 'bg-aqua-400' : 'bg-slate-200'}`}
                       >
-                        <span className={`absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${w.enabled ? 'left-4' : 'left-0.5'}`} />
+                        <span className={`absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-all ${w.enabled ? 'left-4' : 'left-0.5'}`} />
                       </button>
                     </div>
                     <div className="px-3 py-2.5 flex items-center">
@@ -353,8 +419,8 @@ export function StaffForm({ staff, onSave, onCancel }: StaffFormProps) {
                         }}
                         className="form-input py-1.5 text-xs disabled:bg-transparent disabled:border-transparent disabled:text-slate-300 disabled:cursor-not-allowed"
                       >
-                        {TIME_SLOTS.slice(0, -1).map((t) => (
-                          <option key={t} value={t}>{formatTime(t)}</option>
+                        {TIME_SLOTS.filter((t) => t !== '14:30' || day === 6).map((t) => (
+                          <option key={t} value={t} disabled={t === '14:30' && day !== 6}>{formatTime(t)}</option>
                         ))}
                       </select>
                     </div>
@@ -366,31 +432,110 @@ export function StaffForm({ staff, onSave, onCancel }: StaffFormProps) {
                         onChange={(e) => updateWindow(day, { end: e.target.value })}
                         className="form-input py-1.5 text-xs disabled:bg-transparent disabled:border-transparent disabled:text-slate-300 disabled:cursor-not-allowed"
                       >
-                        {endOptions.map((t) => (
-                          <option key={t} value={t}>{formatTime(t)}</option>
+                        {validEnd.map((t) => (
+                          <option
+                            key={t}
+                            value={t}
+                            disabled={day !== 6 && t > '14:30' && t < '15:00'}
+                          >
+                            {formatTime(t)}{day !== 6 && t === '14:30' ? ' (end of day)' : ''}
+                            {t === '18:00' ? ' (end of after school)' : ''}
+                          </option>
                         ))}
                       </select>
                     </div>
                     <div className="px-3 py-3 flex items-center justify-end">
-                      <span className={`text-xs font-medium rounded-full px-2 py-0.5 ${
-                        !w.enabled ? 'text-slate-300' :
-                        w.end === '14:30' && w.start === '08:00' ? 'bg-aqua-100 text-aqua-700' :
-                        w.end <= '10:30' ? 'bg-amber-100 text-amber-700' :
-                        'bg-blue-100 text-blue-700'
-                      }`}>
-                        {w.enabled ? durH : 'Off'}
-                      </span>
+                      {badge ? (
+                        <span className={`text-[11px] font-semibold rounded-full px-2 py-0.5 ${badge.color}`}>
+                          {badge.label}
+                        </span>
+                      ) : (
+                        <span className="text-xs text-slate-300">Off</span>
+                      )}
                     </div>
                   </div>
                 );
               })}
             </div>
+
+            {/* Clinic closed notice */}
+            <div className="mt-2 flex items-start gap-2 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2">
+              <span className="text-rose-500 mt-0.5 flex-shrink-0">⚠</span>
+              <p className="text-xs text-rose-700">
+                <strong>Clinic closed 2:30 – 3:00 PM.</strong> No sessions can be scheduled in this window.
+                Availability windows that end at 2:30 or start at 3:00 are valid — do not set end time to values between 2:30 and 3:00.
+              </p>
+            </div>
+          </div>
+
+          {/* ── Scheduling Rules ── */}
+          <div>
+            <div className="flex items-center gap-2 mb-3">
+              <ShieldAlert size={15} className="text-slate-500" />
+              <label className="form-label mb-0">Scheduling Rules</label>
+            </div>
+
+            {/* Active rules */}
+            {schedulingRules.length > 0 && (
+              <div className="flex flex-wrap gap-2 mb-3">
+                {schedulingRules.map((rule) => (
+                  <span
+                    key={rule}
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-orange-50 border border-orange-200 text-orange-800 rounded-lg text-xs font-medium"
+                  >
+                    {rule}
+                    <button
+                      type="button"
+                      onClick={() => removeRule(rule)}
+                      className="text-orange-400 hover:text-orange-700 transition-colors"
+                    >
+                      <X size={11} />
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
+
+            {/* Quick presets */}
+            <div className="flex flex-wrap gap-1.5 mb-3">
+              {RULE_PRESETS.filter((r) => !schedulingRules.includes(r)).map((rule) => (
+                <button
+                  key={rule}
+                  type="button"
+                  onClick={() => addRule(rule)}
+                  className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs bg-slate-100 hover:bg-orange-50 hover:border-orange-200 border border-transparent text-slate-600 hover:text-orange-700 transition-colors"
+                >
+                  <Plus size={10} />
+                  {rule}
+                </button>
+              ))}
+            </div>
+
+            {/* Custom rule input */}
+            <div className="flex gap-2">
+              <input
+                className="form-input flex-1 text-sm"
+                value={newRuleText}
+                onChange={(e) => setNewRuleText(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addRule(newRuleText); } }}
+                placeholder="Add custom rule… (press Enter)"
+                maxLength={120}
+              />
+              <button
+                type="button"
+                onClick={() => addRule(newRuleText)}
+                disabled={!newRuleText.trim()}
+                className="px-3 py-2 bg-slate-800 text-white rounded-xl text-sm font-medium hover:bg-slate-700 transition-colors disabled:opacity-40"
+              >
+                <Plus size={14} />
+              </button>
+            </div>
             <p className="text-xs text-slate-400 mt-1.5">
-              Scheduler will only assign staff to sessions within their available window.
+              Rules are displayed as reminders when scheduling — they do not automatically block assignments.
             </p>
           </div>
 
-          {/* Skills */}
+          {/* ── Skills ── */}
           <div>
             <label className="form-label mb-2">BT Skills / Training</label>
             <div className="flex flex-wrap gap-2">
@@ -403,7 +548,7 @@ export function StaffForm({ staff, onSave, onCancel }: StaffFormProps) {
                     onClick={() => toggleSkill(skill)}
                     className={`px-3 py-1.5 rounded-full text-xs font-medium border transition-colors ${
                       selected
-                        ? 'bg-aqua-300 border-aqua-300 text-white'
+                        ? 'bg-aqua-400 border-aqua-400 text-white'
                         : 'bg-slate-50 border-slate-200 text-slate-600 hover:border-slate-300'
                     }`}
                   >
@@ -415,36 +560,22 @@ export function StaffForm({ staff, onSave, onCancel }: StaffFormProps) {
             <p className="text-xs text-slate-400 mt-1.5">Used for client skill matching during auto-scheduling.</p>
           </div>
 
-          {/* Supervision */}
+          {/* ── Supervision ── */}
           <div>
             <label className="form-label mb-2">Supervision Hours</label>
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="text-xs text-slate-500 mb-1 block">Required / week</label>
-                <input
-                  className="form-input"
-                  type="number"
-                  min="0"
-                  step="0.5"
-                  value={supervisionRequired}
-                  onChange={(e) => setSupervisionRequired(e.target.value)}
-                />
+                <input className="form-input" type="number" min="0" step="0.5" value={supervisionRequired} onChange={(e) => setSupervisionRequired(e.target.value)} />
               </div>
               <div>
                 <label className="text-xs text-slate-500 mb-1 block">Received this week</label>
-                <input
-                  className="form-input"
-                  type="number"
-                  min="0"
-                  step="0.5"
-                  value={supervisionThisWeek}
-                  onChange={(e) => setSupervisionThisWeek(e.target.value)}
-                />
+                <input className="form-input" type="number" min="0" step="0.5" value={supervisionThisWeek} onChange={(e) => setSupervisionThisWeek(e.target.value)} />
               </div>
             </div>
           </div>
 
-          {/* Client restrictions */}
+          {/* ── Client Restrictions ── */}
           {allClients.length > 0 && (
             <div>
               <label className="form-label mb-2">Cannot Work With (Clients)</label>
@@ -471,24 +602,18 @@ export function StaffForm({ staff, onSave, onCancel }: StaffFormProps) {
             </div>
           )}
 
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="form-label">Status</label>
-              <select className="form-input" value={isActive ? 'active' : 'inactive'} onChange={(e) => setIsActive(e.target.value === 'active')}>
-                <option value="active">Active</option>
-                <option value="inactive">Inactive</option>
-              </select>
-            </div>
-            <div>
-              <label className="form-label">Notes</label>
-              <input className="form-input" value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Optional notes" maxLength={500} />
-            </div>
+          {/* ── Notes ── */}
+          <div>
+            <label className="form-label">Internal Notes</label>
+            <input className="form-input" value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Optional notes visible to admins only" maxLength={500} />
           </div>
 
           {error && <p className="text-red-600 text-sm bg-red-50 px-3 py-2 rounded-lg">{error}</p>}
 
           <div className="flex gap-3 pt-2">
-            <button type="button" onClick={onCancel} className="flex-1 py-2.5 border border-slate-200 rounded-xl text-slate-700 font-medium hover:bg-slate-50 transition-colors text-sm">Cancel</button>
+            <button type="button" onClick={onCancel} className="flex-1 py-2.5 border border-slate-200 rounded-xl text-slate-700 font-medium hover:bg-slate-50 transition-colors text-sm">
+              Cancel
+            </button>
             <button type="submit" disabled={saving} className="flex-1 py-2.5 bg-accent-500 hover:bg-accent-600 text-white rounded-xl font-bold transition-colors text-sm disabled:opacity-60">
               {saving ? 'Saving…' : isEdit ? 'Save Changes' : 'Add Staff Member'}
             </button>

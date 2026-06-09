@@ -13,6 +13,7 @@ import {
   DAY_NAMES,
   ALL_SKILLS,
   TIME_SLOTS,
+  ALL_END_TIMES,
   AVAILABILITY_PRESETS,
   formatTime,
 } from '../../lib/types';
@@ -24,7 +25,7 @@ interface ClientFormProps {
   onCancel: () => void;
 }
 
-const DAYS: DayOfWeek[] = [1, 2, 3, 4, 5];
+const DAYS: DayOfWeek[] = [1, 2, 3, 4, 5, 6];
 
 interface DayWindow {
   day: DayOfWeek;
@@ -33,9 +34,15 @@ interface DayWindow {
   end: string;
 }
 
-function shiftFromWindow(start: string, end: string): AvailabilityShift {
+function shiftFromWindow(start: string, end: string, day: DayOfWeek): AvailabilityShift {
+  if (day === 6) {
+    if (end <= '12:00') return 'SAT_AM';
+    if (start >= '12:00') return 'SAT_PM';
+    return 'SAT_AM';
+  }
+  if (start >= '15:00') return 'EVE';
   if (start === '08:00' && end === '14:30') return 'FULL';
-  if (start <= '08:00' && end <= '10:30') return 'AM';
+  if (end <= '10:30') return 'AM';
   return 'PM';
 }
 
@@ -54,9 +61,9 @@ export function ClientForm({ client, onSave, onCancel }: ClientFormProps) {
 
   const defaultWindows: DayWindow[] = DAYS.map((d) => ({
     day: d,
-    enabled: true,
-    start: '08:00',
-    end: '14:30',
+    enabled: d !== 6,
+    start: d === 6 ? '09:00' : '08:00',
+    end: d === 6 ? '15:00' : '14:30',
   }));
   const [dayWindows, setDayWindows] = useState<DayWindow[]>(defaultWindows);
 
@@ -91,7 +98,7 @@ export function ClientForm({ client, onSave, onCancel }: ClientFormProps) {
     if (avail.length > 0) {
       const windows: DayWindow[] = DAYS.map((d) => {
         const row = avail.find((a: any) => a.day_of_week === d);
-        if (!row) return { day: d, enabled: false, start: '08:00', end: '14:30' };
+        if (!row) return { day: d, enabled: false, start: d === 6 ? '09:00' : '08:00', end: d === 6 ? '15:00' : '14:30' };
         const start = row.time_start ? row.time_start.slice(0, 5) : AVAILABILITY_PRESETS[row.shift as AvailabilityShift]?.start ?? '08:00';
         const end = row.time_end ? row.time_end.slice(0, 5) : AVAILABILITY_PRESETS[row.shift as AvailabilityShift]?.end ?? '14:30';
         return { day: d, enabled: true, start, end };
@@ -112,8 +119,8 @@ export function ClientForm({ client, onSave, onCancel }: ClientFormProps) {
       const windows: DayWindow[] = DAYS.map((d) => ({
         day: d,
         enabled: attendDays.includes(d),
-        start: preset.start,
-        end: preset.end,
+        start: d === 6 ? '09:00' : preset.start,
+        end: d === 6 ? '15:00' : preset.end,
       }));
       setDayWindows(windows);
     }
@@ -127,11 +134,11 @@ export function ClientForm({ client, onSave, onCancel }: ClientFormProps) {
 
   function applyPreset(preset: 'FULL' | 'AM' | 'PM' | 'ALL_DAYS') {
     if (preset === 'ALL_DAYS') {
-      setDayWindows(DAYS.map((d) => ({ day: d, enabled: true, start: '08:00', end: '14:30' })));
+      setDayWindows(DAYS.map((d) => ({ day: d, enabled: d !== 6, start: d === 6 ? '09:00' : '08:00', end: d === 6 ? '15:00' : '14:30' })));
       return;
     }
     const { start, end } = AVAILABILITY_PRESETS[preset as AvailabilityShift];
-    setDayWindows((prev) => prev.map((w) => (w.enabled ? { ...w, start, end } : w)));
+    setDayWindows((prev) => prev.map((w) => (w.enabled && w.day !== 6 ? { ...w, start, end } : w)));
   }
 
   function toggleSkill(skill: string) {
@@ -239,7 +246,7 @@ export function ClientForm({ client, onSave, onCancel }: ClientFormProps) {
           enabledDays.map((w) => ({
             client_id: clientId,
             day_of_week: w.day,
-            shift: shiftFromWindow(w.start, w.end),
+            shift: shiftFromWindow(w.start, w.end, w.day),
             time_start: w.start,
             time_end: w.end,
           }))
@@ -342,11 +349,7 @@ export function ClientForm({ client, onSave, onCancel }: ClientFormProps) {
 
               {DAYS.map((day) => {
                 const w = dayWindows.find((x) => x.day === day)!;
-                const validEnd = TIME_SLOTS.filter((t) => t > w.start);
-                const extraEnds = ['10:30', '14:30'].filter(
-                  (t) => t > w.start && !validEnd.includes(t)
-                );
-                const endOptions = [...validEnd, ...extraEnds].sort();
+                const validEnd = ALL_END_TIMES.filter((t) => t > w.start);
                 const durH = w.enabled
                   ? (() => {
                       const [sh, sm] = w.start.split(':').map(Number);
@@ -387,7 +390,7 @@ export function ClientForm({ client, onSave, onCancel }: ClientFormProps) {
                         }}
                         className="form-input py-1.5 text-xs disabled:bg-transparent disabled:border-transparent disabled:text-slate-300 disabled:cursor-not-allowed"
                       >
-                        {TIME_SLOTS.slice(0, -1).map((t) => (
+                        {TIME_SLOTS.map((t) => (
                           <option key={t} value={t}>{formatTime(t)}</option>
                         ))}
                       </select>
@@ -400,7 +403,7 @@ export function ClientForm({ client, onSave, onCancel }: ClientFormProps) {
                         onChange={(e) => updateWindow(day, { end: e.target.value })}
                         className="form-input py-1.5 text-xs disabled:bg-transparent disabled:border-transparent disabled:text-slate-300 disabled:cursor-not-allowed"
                       >
-                        {endOptions.map((t) => (
+                        {validEnd.map((t) => (
                           <option key={t} value={t}>{formatTime(t)}</option>
                         ))}
                       </select>

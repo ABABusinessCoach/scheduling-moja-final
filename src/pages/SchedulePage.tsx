@@ -1,10 +1,10 @@
 import React, { useState } from 'react';
 import { supabase } from '../lib/supabase';
 import { useSchedule } from '../contexts/ScheduleContext';
-import type { DayOfWeek } from '../lib/types';
+import type { DayOfWeek, RatioAlert } from '../lib/types';
 import { DAY_NAMES } from '../lib/types';
 import { generateWeeklySchedule } from '../lib/scheduler';
-import { format, addDays, formatWeekRange } from '../lib/dateUtils';
+import { format, addDays, getMonday } from '../lib/dateUtils';
 import { WeeklyGrid } from '../components/schedule/WeeklyGrid';
 import { StaffView } from '../components/schedule/StaffView';
 import { ClientView } from '../components/schedule/ClientView';
@@ -13,6 +13,8 @@ import { TimelineGrid } from '../components/schedule/TimelineGrid';
 import { DailyView } from '../components/schedule/DailyView';
 import { SupervisionTracker } from '../components/schedule/SupervisionTracker';
 import { ClientHourTracker } from '../components/schedule/ClientHourTracker';
+import { ShiftManager } from '../components/schedule/ShiftManager';
+import { GapFillerModal } from '../components/schedule/GapFillerModal';
 import { useToast } from '../lib/toast';
 import {
   ChevronLeft,
@@ -27,6 +29,7 @@ import {
   Calendar,
   FileText,
   X,
+  Settings2,
 } from 'lucide-react';
 
 type ViewMode = 'timeline' | 'daily' | 'grid' | 'staff' | 'client';
@@ -43,11 +46,16 @@ export function SchedulePage() {
     assignments,
     sessionNotes,
     ratioAlerts,
+    shifts,
+    breakTimes,
     loading,
     refreshSchedule,
-    setScheduleData,
+    refreshShiftsAndBreaks,
     handleUpdateAssignment,
+    handleInsertAssignment,
     handleMoveAssignment,
+    handleDeleteAssignment,
+    handleUpdateEndTime,
     handleToggleNote,
   } = useSchedule();
 
@@ -55,6 +63,8 @@ export function SchedulePage() {
   const [selectedDay, setSelectedDay] = useState<DayOfWeek>(1);
   const [generating, setGenerating] = useState(false);
   const [alertsDismissed, setAlertsDismissed] = useState(false);
+  const [gapAlert, setGapAlert] = useState<RatioAlert | null>(null);
+  const [showShiftManager, setShowShiftManager] = useState(false);
   const showToast = useToast();
 
   async function generateSchedule() {
@@ -99,7 +109,7 @@ export function SchedulePage() {
       }
       await refreshSchedule();
       showToast('Schedule generated.');
-    } catch (err) {
+    } catch {
       showToast('Failed to generate schedule. Please try again.', 'error');
     } finally {
       setGenerating(false);
@@ -108,10 +118,7 @@ export function SchedulePage() {
 
   async function publishSchedule() {
     if (!schedule) return;
-    const { error } = await supabase
-      .from('schedules')
-      .update({ status: 'published' })
-      .eq('id', schedule.id);
+    const { error } = await supabase.from('schedules').update({ status: 'published' }).eq('id', schedule.id);
     if (error) {
       showToast('Failed to publish schedule.', 'error');
     } else {
@@ -142,6 +149,8 @@ export function SchedulePage() {
     sessionNotes,
     onUpdateAssignment: handleUpdateAssignment,
     onMoveAssignment: handleMoveAssignment,
+    onDeleteAssignment: handleDeleteAssignment,
+    onUpdateEndTime: handleUpdateEndTime,
     onToggleNote: handleToggleNote,
   };
 
@@ -176,13 +185,9 @@ export function SchedulePage() {
 
           <div className="flex items-center gap-2">
             {schedule && (
-              <span
-                className={`px-2.5 py-1 rounded-full text-xs font-semibold ${
-                  schedule.status === 'published'
-                    ? 'bg-aqua-100 text-aqua-600'
-                    : 'bg-amber-100 text-amber-700'
-                }`}
-              >
+              <span className={`px-2.5 py-1 rounded-full text-xs font-semibold ${
+                schedule.status === 'published' ? 'bg-aqua-100 text-aqua-600' : 'bg-amber-100 text-amber-700'
+              }`}>
                 {schedule.status === 'published' ? 'Published' : 'Draft'}
               </span>
             )}
@@ -191,10 +196,16 @@ export function SchedulePage() {
                 <AlertTriangle size={12} /> {violationCount} violation{violationCount !== 1 ? 's' : ''}
               </span>
             )}
+            <button
+              onClick={() => setShowShiftManager(true)}
+              className="flex items-center gap-1.5 px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-xl text-sm font-semibold transition-colors"
+            >
+              <Settings2 size={15} /> Shifts
+            </button>
             {schedule && schedule.status !== 'published' && (
               <button
                 onClick={publishSchedule}
-                className="flex items-center gap-1.5 px-3 py-2 bg-aqua-50 hover:bg-aqua-100 text-aqua-600 rounded-lg text-sm font-semibold transition-colors"
+                className="flex items-center gap-1.5 px-3 py-2 bg-aqua-50 hover:bg-aqua-100 text-aqua-600 rounded-xl text-sm font-semibold transition-colors"
               >
                 <CheckCircle2 size={15} /> Publish
               </button>
@@ -210,7 +221,7 @@ export function SchedulePage() {
           </div>
         </div>
 
-        {/* Ratio alerts banner */}
+        {/* Ratio alerts */}
         {ratioAlerts.length > 0 && !alertsDismissed && (
           <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-3 mb-4">
             <div className="flex items-start justify-between gap-3">
@@ -221,20 +232,19 @@ export function SchedulePage() {
                 </div>
                 <div className="flex flex-wrap gap-2">
                   {ratioAlerts.map((alert, i) => (
-                    <span
+                    <button
                       key={i}
-                      className="px-2.5 py-1 bg-red-100 text-red-700 rounded-lg text-xs font-medium"
+                      onClick={() => schedule && setGapAlert(alert)}
+                      className={`px-2.5 py-1 bg-red-100 text-red-700 rounded-lg text-xs font-medium transition-colors ${
+                        schedule ? 'hover:bg-red-200 cursor-pointer' : 'cursor-default'
+                      }`}
                     >
-                      {DAY_NAMES[alert.day]} {alert.shift} — {alert.clientCount} clients,{' '}
-                      {alert.eligibleStaffCount} eligible staff (−{alert.deficit})
-                    </span>
+                      {DAY_NAMES[alert.day]} {alert.shift} — {alert.clientCount} clients, {alert.eligibleStaffCount} eligible staff (−{alert.deficit})
+                    </button>
                   ))}
                 </div>
               </div>
-              <button
-                onClick={() => setAlertsDismissed(true)}
-                className="text-red-400 hover:text-red-600 transition-colors flex-shrink-0 mt-0.5"
-              >
+              <button onClick={() => setAlertsDismissed(true)} className="text-red-400 hover:text-red-600 transition-colors flex-shrink-0 mt-0.5">
                 <X size={16} />
               </button>
             </div>
@@ -248,9 +258,7 @@ export function SchedulePage() {
               key={tab.id}
               onClick={() => setViewMode(tab.id as ViewMode)}
               className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
-                viewMode === tab.id
-                  ? 'bg-white text-slate-900 shadow-sm'
-                  : 'text-slate-500 hover:text-slate-700'
+                viewMode === tab.id ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'
               }`}
             >
               {tab.icon} {tab.label}
@@ -266,9 +274,7 @@ export function SchedulePage() {
           <div className="bg-white rounded-2xl border border-slate-200 flex flex-col items-center justify-center py-20 text-center">
             <CalendarDays size={40} className="text-slate-300 mb-4" />
             <h3 className="font-semibold text-slate-700 mb-1">No schedule for this week</h3>
-            <p className="text-slate-400 text-sm mb-5">
-              Click Auto-Generate to build the schedule automatically.
-            </p>
+            <p className="text-slate-400 text-sm mb-5">Click Auto-Generate to build the schedule automatically.</p>
             <button
               onClick={generateSchedule}
               disabled={generating}
@@ -278,16 +284,23 @@ export function SchedulePage() {
             </button>
           </div>
         ) : viewMode === 'timeline' ? (
-          <TimelineGrid {...sharedProps} />
+          <TimelineGrid
+            {...sharedProps}
+            shifts={shifts}
+            breakTimes={breakTimes}
+          />
         ) : viewMode === 'daily' ? (
-          <DailyView {...sharedProps} day={selectedDay} onDayChange={setSelectedDay} />
+          <DailyView {...sharedProps} breakTimes={breakTimes} day={selectedDay} onDayChange={setSelectedDay} />
         ) : viewMode === 'grid' ? (
           <WeeklyGrid
             assignments={assignments}
             staff={staff}
             clients={clients}
+            shifts={shifts}
             onUpdateAssignment={handleUpdateAssignment}
             onMoveAssignment={handleMoveAssignment}
+            onDeleteAssignment={handleDeleteAssignment}
+            onUpdateEndTime={handleUpdateEndTime}
             weekLabel={weekLabel}
           />
         ) : viewMode === 'staff' ? (
@@ -313,61 +326,72 @@ export function SchedulePage() {
               </div>
               <div className="flex items-center justify-between">
                 <span className="text-slate-500">Unassigned</span>
-                <span className={`font-semibold ${unassignedCount > 0 ? 'text-amber-600' : 'text-slate-400'}`}>
-                  {unassignedCount}
-                </span>
+                <span className={`font-semibold ${unassignedCount > 0 ? 'text-amber-600' : 'text-slate-400'}`}>{unassignedCount}</span>
               </div>
               <div className="flex items-center justify-between">
                 <span className="text-slate-500">Violations</span>
-                <span className={`font-semibold ${violationCount > 0 ? 'text-red-600' : 'text-aqua-500'}`}>
-                  {violationCount}
-                </span>
+                <span className={`font-semibold ${violationCount > 0 ? 'text-red-600' : 'text-aqua-500'}`}>{violationCount}</span>
               </div>
               <div className="flex items-center justify-between">
                 <span className="text-slate-500">Manual overrides</span>
-                <span className="font-semibold text-blue-600">
-                  {assignments.filter((a) => a.is_manual_override).length}
-                </span>
+                <span className="font-semibold text-blue-600">{assignments.filter((a) => a.is_manual_override).length}</span>
               </div>
               <div className="flex items-center justify-between border-t border-slate-100 pt-2 mt-2">
                 <span className="flex items-center gap-1 text-slate-500">
                   <FileText size={11} />Notes missing
                 </span>
-                <span className={`font-semibold ${missingNotesCount > 0 ? 'text-amber-600' : 'text-aqua-500'}`}>
-                  {missingNotesCount}
-                </span>
+                <span className={`font-semibold ${missingNotesCount > 0 ? 'text-amber-600' : 'text-aqua-500'}`}>{missingNotesCount}</span>
               </div>
             </div>
           </div>
         )}
 
-        {/* Shift reference */}
-        <div className="bg-white rounded-xl border border-slate-200 p-4">
-          <h3 className="text-sm font-semibold text-slate-700 mb-3">Shift Reference</h3>
-          <div className="space-y-2 text-xs">
-            {[
-              { label: 'AM Session', time: '8:00 – 10:30 AM', color: 'bg-amber-100 text-amber-700' },
-              { label: 'Break', time: '10:00 – 10:30 AM', color: 'bg-rose-100 text-rose-600' },
-              { label: 'PM Session', time: '10:30 AM – 2:30 PM', color: 'bg-blue-100 text-blue-700' },
-              { label: 'Lunch', time: '12:00 – 12:30 PM', color: 'bg-rose-100 text-rose-600' },
-            ].map((r) => (
-              <div key={r.label} className="flex items-center justify-between gap-2">
-                <span className={`px-1.5 py-0.5 rounded text-xs font-medium ${r.color}`}>{r.label}</span>
-                <span className="text-slate-400 text-right">{r.time}</span>
-              </div>
-            ))}
+        {shifts.filter((s) => s.is_active).length > 0 && (
+          <div className="bg-white rounded-xl border border-slate-200 p-4">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-sm font-semibold text-slate-700">Active Shifts</h3>
+              <button
+                onClick={() => setShowShiftManager(true)}
+                className="text-xs text-slate-400 hover:text-slate-600 transition-colors"
+              >
+                Edit
+              </button>
+            </div>
+            <div className="space-y-2 text-xs">
+              {shifts.filter((s) => s.is_active).map((s) => (
+                <div key={s.id} className="flex items-center gap-2">
+                  <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: s.color }} />
+                  <span className="text-slate-600 truncate">{s.label}</span>
+                  <span className="text-slate-400 ml-auto whitespace-nowrap">{s.time_start.slice(0, 5)}–{s.time_end.slice(0, 5)}</span>
+                </div>
+              ))}
+            </div>
           </div>
-        </div>
+        )}
       </div>
+
+      {showShiftManager && (
+        <ShiftManager
+          shifts={shifts}
+          breakTimes={breakTimes}
+          onClose={() => setShowShiftManager(false)}
+          onRefresh={refreshShiftsAndBreaks}
+        />
+      )}
+
+      {gapAlert && schedule && (
+        <GapFillerModal
+          alert={gapAlert}
+          assignments={assignments}
+          staff={staff}
+          clients={clients}
+          allRestrictions={allRestrictions}
+          scheduleId={schedule.id}
+          onAssign={handleUpdateAssignment}
+          onInsert={handleInsertAssignment}
+          onClose={() => setGapAlert(null)}
+        />
+      )}
     </div>
   );
-}
-
-function getMonday(date: Date): Date {
-  const d = new Date(date);
-  const day = d.getDay();
-  const diff = day === 0 ? -6 : 1 - day;
-  d.setDate(d.getDate() + diff);
-  d.setHours(0, 0, 0, 0);
-  return d;
 }
