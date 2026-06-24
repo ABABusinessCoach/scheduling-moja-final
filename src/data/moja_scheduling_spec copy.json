@@ -1,0 +1,502 @@
+{
+  "meta": {
+    "organization": "Moja Behavioral Services",
+    "document": "Scheduling System Specification",
+    "version": "1.1",
+    "date": "2025-06-24",
+    "purpose": "Source of truth for scheduling rules, staff availability, client requirements, and constraints to be integrated into the Boldt scheduling application."
+  },
+
+  "session_types": [
+    {
+      "id": "morning",
+      "label": "Morning Session",
+      "start": "08:00",
+      "end": "14:30",
+      "days": ["monday", "tuesday", "wednesday", "thursday", "friday"]
+    },
+    {
+      "id": "after_school",
+      "label": "After School Session",
+      "start": "15:00",
+      "end": "18:00",
+      "days": ["monday", "tuesday", "wednesday", "thursday", "friday"]
+    },
+    {
+      "id": "summer_camp",
+      "label": "Summer Camp",
+      "start": "08:00",
+      "end": "15:30",
+      "days": ["monday", "tuesday", "wednesday", "thursday", "friday"],
+      "note": "Summer camp hours apply to specific clients during camp season. End time varies by client authorization."
+    }
+  ],
+
+  "staff": [
+    {
+      "id": "rebecca_jones",
+      "name": "Rebecca Jones",
+      "availability": {
+        "morning": ["monday", "tuesday", "wednesday", "thursday", "friday"],
+        "after_school": "as_needed_with_advance_notice"
+      },
+      "scheduling_priority": "founding_bt",
+      "constraints": [
+        {
+          "type": "client_incompatibility",
+          "client_id": "hayden_little",
+          "description": "Rebecca Jones cannot be scheduled with Hayden Little under any circumstances."
+        }
+      ],
+      "special_duties": [
+        {
+          "type": "client_escort",
+          "client_id": "jasper",
+          "description": "Designated escort for Jasper. Must be scheduled to depart for Bulldog Printing by 2:00–2:15 PM on every session day.",
+          "arrival_time": "14:00",
+          "pickup_location": "Bulldog Printing",
+          "destination": "Moja Behavioral Services clinic",
+          "coverage_rule": "On any day Rebecca Jones cannot cover the after school session, a pre-identified alternate with escort training must be explicitly assigned to this duty."
+        }
+      ]
+    },
+    {
+      "id": "chloe",
+      "name": "Chloe",
+      "availability": {
+        "morning": ["monday", "tuesday", "wednesday", "thursday", "friday"],
+        "after_school": ["tuesday"]
+      },
+      "scheduling_priority": "standard",
+      "constraints": []
+    },
+    {
+      "id": "becca_wolfson",
+      "name": "Becca Wolfson",
+      "availability": {
+        "morning": ["wednesday", "thursday"],
+        "after_school": ["monday", "tuesday", "wednesday", "thursday"],
+        "summer_camp": ["monday", "tuesday", "wednesday", "thursday", "friday"]
+      },
+      "scheduling_priority": "founding_bt",
+      "constraints": [],
+      "notes": [
+        "Schedule subject to adjustment due to husband's court appearance schedule — may shift with little notice.",
+        "Must be home for childcare; cannot work outside stated availability without advance coordination.",
+        "Summer exception: daughter can accompany her to clinic. Full summer camp availability unlocked in summer."
+      ],
+      "time_off": [
+        { "dates": ["2025-07-06", "2025-07-07", "2025-07-08"], "status": "approved" },
+        { "dates": ["2025-07-20"], "status": "approved" },
+        { "dates": ["2025-09-11", "2025-09-12", "2025-09-13", "2025-09-14"], "status": "approved" }
+      ]
+    },
+    {
+      "id": "nick_stevens",
+      "name": "Nick Stevens",
+      "availability": {
+        "morning": ["monday", "tuesday", "wednesday", "thursday", "friday"],
+        "after_school": ["monday", "tuesday", "wednesday", "thursday"]
+      },
+      "scheduling_priority": "founding_bt",
+      "constraints": [],
+      "time_off": [
+        { "dates": ["2025-08-12", "2025-08-13", "2025-08-14", "2025-08-15", "2025-08-16", "2025-08-17", "2025-08-18", "2025-08-19"], "status": "approved" },
+        { "dates": ["2025-07-02", "2025-07-03", "2025-07-04", "2025-07-05", "2025-07-06"], "status": "approved" }
+      ],
+      "temporary_assignments": [
+        {
+          "type": "off_site_companion",
+          "client_id": "hayden_little",
+          "location": "Off-site summer camp",
+          "start_date": "2025-06-29",
+          "note": "Nick accompanies Hayden Little to off-site camp. Unavailable for clinic sessions during this period. Off Jul 2–6; camp is aware and has coverage."
+        }
+      ]
+    },
+    {
+      "id": "aaron",
+      "name": "Aaron",
+      "availability": {
+        "morning": ["monday", "tuesday", "wednesday", "thursday", "friday"],
+        "after_school": "occasionally_with_ample_advance_notice"
+      },
+      "scheduling_priority": "standard",
+      "constraints": [
+        {
+          "type": "scheduling_rule",
+          "description": "After school sessions require ample advance notice. No last-minute or same-day after school scheduling."
+        }
+      ]
+    },
+    {
+      "id": "brianna",
+      "name": "Brianna",
+      "availability": {
+        "morning": [],
+        "after_school": ["monday", "wednesday", "thursday"]
+      },
+      "scheduling_priority": "standard",
+      "constraints": []
+    },
+    {
+      "id": "jen_campbell",
+      "name": "Jen Campbell",
+      "availability": {
+        "morning": ["monday", "tuesday", "wednesday", "thursday", "friday"],
+        "after_school": ["monday", "tuesday", "thursday"]
+      },
+      "scheduling_priority": "high_hours",
+      "hours_requirement": {
+        "target": 40,
+        "minimum_acceptable": 38.5,
+        "note": "Jen must be scheduled as close to 40 hours per week as possible. This is a firm scheduling requirement, not a preference."
+      },
+      "constraints": []
+    },
+    {
+      "id": "cole",
+      "name": "Cole",
+      "availability": {
+        "summer_only": true,
+        "morning": ["tuesday", "wednesday", "thursday"],
+        "morning_start_override": "07:55",
+        "morning_end_override": "12:00",
+        "after_school": []
+      },
+      "scheduling_priority": "standard",
+      "constraints": [
+        {
+          "type": "schedule_expiry",
+          "description": "Summer schedule only. Availability changes at end of August 2025 — must be re-confirmed and updated in system."
+        }
+      ]
+    },
+    {
+      "id": "phoenix",
+      "name": "Phoenix",
+      "availability": {
+        "morning": ["monday", "tuesday", "wednesday", "thursday", "friday"],
+        "after_school": ["monday", "tuesday", "wednesday", "thursday", "friday"]
+      },
+      "scheduling_priority": "standard",
+      "constraints": []
+    },
+    {
+      "id": "sam",
+      "name": "Sam",
+      "availability": {
+        "morning": ["monday", "tuesday", "wednesday", "thursday", "friday"],
+        "after_school": ["monday", "tuesday", "wednesday", "thursday", "friday"],
+        "summer_camp": "pending_confirmation"
+      },
+      "scheduling_priority": "standard",
+      "constraints": [
+        {
+          "type": "pending_confirmation",
+          "description": "Summer camp availability not yet confirmed. Do not schedule Sam for summer camp until confirmed by admin."
+        }
+      ]
+    },
+    {
+      "id": "grace_li",
+      "name": "Grace Li",
+      "availability": {
+        "morning": ["monday", "tuesday", "wednesday", "thursday", "friday"],
+        "after_school": ["monday", "tuesday", "wednesday", "thursday", "friday"]
+      },
+      "scheduling_priority": "standard",
+      "start_date": "2025-07-01",
+      "constraints": []
+    }
+  ],
+
+  "scheduling_priorities": {
+    "description": "When allocating hours, apply in this order:",
+    "order": [
+      {
+        "rank": 1,
+        "rule": "founding_bts",
+        "staff_ids": ["rebecca_jones", "becca_wolfson", "nick_stevens"],
+        "description": "Original/founding BTs receive the highest scheduling priority for available hours."
+      },
+      {
+        "rank": 2,
+        "rule": "hours_guarantee",
+        "staff_ids": ["jen_campbell"],
+        "description": "Jen Campbell must be scheduled as close to 40 hours/week as possible (min: 38.5 hrs)."
+      },
+      {
+        "rank": 3,
+        "rule": "standard",
+        "description": "All other staff scheduled based on client need and individual availability."
+      }
+    ]
+  },
+
+  "clients": [
+    {
+      "id": "lyla",
+      "name": "Lyla",
+      "enrollment_type": "part_time",
+      "current_schedule": {
+        "session_type": "morning",
+        "days": ["monday", "tuesday", "wednesday", "thursday", "friday"],
+        "start": "08:00",
+        "end": "12:00"
+      },
+      "upcoming_transitions": [
+        {
+          "trigger": "summer_camp_start",
+          "new_schedule": { "session_type": "summer_camp", "start": "08:00", "end": "15:30", "days": ["monday", "tuesday", "wednesday", "thursday", "friday"] }
+        },
+        {
+          "trigger": "school_year_resume",
+          "new_schedule": { "session_type": "after_school", "note": "Lyla attends preschool during the day and will likely transition to after school sessions when school resumes." }
+        }
+      ],
+      "constraints": []
+    },
+    {
+      "id": "milo",
+      "name": "Milo",
+      "enrollment_type": "part_time",
+      "current_schedule": {
+        "session_type": "morning",
+        "days": ["monday", "tuesday", "wednesday", "thursday", "friday"],
+        "start": "08:00",
+        "end": "11:00"
+      },
+      "authorization": {
+        "weekly_hours_max": 15,
+        "note": "Must not be scheduled beyond 15 authorized hours per week under any circumstances."
+      },
+      "upcoming_transitions": [
+        {
+          "trigger": "summer_camp_start",
+          "new_schedule": { "session_type": "summer_camp", "type": "half_day", "note": "Half-day camp only due to 15 hr/week authorization cap." }
+        }
+      ],
+      "constraints": []
+    },
+    {
+      "id": "delta",
+      "name": "Delta",
+      "enrollment_type": "full_time",
+      "current_schedule": {
+        "session_type": "morning",
+        "days": ["monday", "tuesday", "wednesday", "thursday", "friday"],
+        "start": "08:00",
+        "end": "14:30"
+      },
+      "constraints": []
+    },
+    {
+      "id": "eshall",
+      "name": "Eshall",
+      "enrollment_type": "full_time",
+      "current_schedule": {
+        "session_type": "morning",
+        "days": ["monday", "tuesday", "wednesday", "thursday", "friday"],
+        "start": "08:00",
+        "end": "14:30"
+      },
+      "constraints": [
+        {
+          "type": "staff_gender_restriction",
+          "rule": "female_staff_only",
+          "description": "Eshall may not be scheduled with any male staff member. The system must enforce this and flag conflicts at point of assignment."
+        }
+      ]
+    },
+    {
+      "id": "dili",
+      "name": "Dili",
+      "enrollment_type": "full_time",
+      "current_schedule": {
+        "session_type": "morning",
+        "days": ["monday", "tuesday", "wednesday", "thursday", "friday"],
+        "start": "08:00",
+        "end": "14:30"
+      },
+      "constraints": []
+    },
+    {
+      "id": "lucas",
+      "name": "Lucas",
+      "enrollment_type": "full_time",
+      "current_schedule": {
+        "session_type": "morning",
+        "days": ["monday", "tuesday", "wednesday", "thursday", "friday"],
+        "start": "08:00",
+        "end": "14:30"
+      },
+      "constraints": []
+    },
+    {
+      "id": "grace_client",
+      "name": "Grace (client)",
+      "enrollment_type": "full_time",
+      "current_schedule": {
+        "session_type": "morning",
+        "days": ["monday", "tuesday", "wednesday", "thursday", "friday"],
+        "start": "08:00",
+        "end": "14:30"
+      },
+      "constraints": []
+    },
+    {
+      "id": "elijah",
+      "name": "Elijah",
+      "enrollment_type": "variable",
+      "current_schedule": {
+        "session_type": "morning",
+        "days": "variable_3_to_4_days_per_week",
+        "start": "09:30",
+        "end": "14:30",
+        "note": "Which mornings vary week to week. Always attends Wednesday after school session."
+      },
+      "fixed_sessions": [
+        { "session_type": "after_school", "day": "wednesday" }
+      ],
+      "upcoming_transitions": [
+        {
+          "trigger": "summer_camp_start",
+          "new_schedule": { "session_type": "summer_camp", "days": ["monday", "tuesday", "wednesday", "thursday", "friday"], "start": "08:00", "end": "12:00" }
+        }
+      ],
+      "constraints": [
+        {
+          "type": "staff_gender_restriction",
+          "rule": "female_staff_only",
+          "description": "Elijah may not be scheduled with any male staff member. The system must enforce this and flag conflicts at point of assignment."
+        }
+      ]
+    },
+    {
+      "id": "jasper",
+      "name": "Jasper",
+      "enrollment_type": "after_school",
+      "current_schedule": {
+        "session_type": "after_school",
+        "start": "15:00",
+        "end": "18:00"
+      },
+      "constraints": [
+        {
+          "type": "escort_required",
+          "description": "Jasper must be escorted from his mother's workplace (Bulldog Printing) to the clinic before every session.",
+          "escort_staff_primary": "rebecca_jones",
+          "escort_departure_time": "14:00",
+          "escort_latest_departure": "14:15",
+          "pickup_location": "Bulldog Printing",
+          "coverage_rule": "If primary escort (Rebecca Jones) is unavailable, an alternate BT with escort training must be explicitly assigned. The escort task and departure time must appear on the alternate's schedule — it cannot be assumed."
+        }
+      ]
+    },
+    {
+      "id": "hayden_little",
+      "name": "Hayden Little",
+      "enrollment_type": "after_school",
+      "current_schedule": {
+        "session_type": "after_school",
+        "start": "15:00",
+        "end": "18:00"
+      },
+      "temporary_assignment": {
+        "type": "off_site_camp",
+        "companion_staff_id": "nick_stevens",
+        "start_date": "2025-06-29",
+        "note": "Hayden is at off-site summer camp starting June 29. Nick Stevens accompanies him. Nick is off Jul 2–6; camp has coverage arranged."
+      },
+      "constraints": [
+        {
+          "type": "staff_incompatibility",
+          "staff_id": "rebecca_jones",
+          "description": "Hayden Little cannot be scheduled with Rebecca Jones under any circumstances, including all session types and locations."
+        }
+      ]
+    },
+    {
+      "id": "finn",
+      "name": "Finn",
+      "enrollment_type": "after_school",
+      "current_schedule": {
+        "session_type": "after_school",
+        "start": "15:00",
+        "end": "18:00"
+      },
+      "constraints": []
+    },
+    {
+      "id": "john",
+      "name": "John",
+      "enrollment_type": "after_school",
+      "current_schedule": {
+        "session_type": "after_school",
+        "start": "15:00",
+        "end": "18:00"
+      },
+      "constraints": []
+    }
+  ],
+
+  "global_constraints": [
+    {
+      "id": "female_staff_only",
+      "type": "hard_constraint",
+      "applies_to_clients": ["eshall", "elijah"],
+      "rule": "These clients must never be assigned a male staff member. System must block and flag this at point of scheduling."
+    },
+    {
+      "id": "rebecca_hayden_block",
+      "type": "hard_constraint",
+      "staff_id": "rebecca_jones",
+      "client_id": "hayden_little",
+      "rule": "Rebecca Jones and Hayden Little cannot share any session, location, or assignment."
+    },
+    {
+      "id": "jasper_escort",
+      "type": "operational_requirement",
+      "client_id": "jasper",
+      "rule": "An escort task must be auto-generated for every Jasper session. Primary: Rebecca Jones. If unavailable, alternate must be assigned with escort training verified and departure time set to 14:00."
+    },
+    {
+      "id": "milo_authorization_cap",
+      "type": "hard_constraint",
+      "client_id": "milo",
+      "rule": "Milo's weekly scheduled hours must never exceed 15. System should warn if a schedule would breach this."
+    },
+    {
+      "id": "aaron_advance_notice",
+      "type": "soft_constraint",
+      "staff_id": "aaron",
+      "rule": "Aaron cannot be assigned after school sessions without advance notice. No same-day or last-minute after school assignments."
+    }
+  ],
+
+  "time_off_policy": {
+    "required_system": "JustWorks",
+    "note": "All time off must be submitted through JustWorks. Informal requests are not tracked and will not be honored. Currently ~50% of staff are non-compliant — system should reflect JustWorks-approved time off only.",
+    "advance_notice_minimums": {
+      "planned": "TBD — to be defined by management",
+      "emergency": "TBD — notify admin as early as possible via method to be defined"
+    },
+    "boldt_requirements": [
+      "Approved time off from JustWorks must be blocked in the schedule before assignments are generated.",
+      "Any approved time off must trigger an automatic coverage check for that staff member's assigned clients.",
+      "Escort duties must be re-assigned when the primary staff member has approved time off."
+    ]
+  },
+
+  "open_items": [
+    { "id": 1, "item": "Confirm Sam's summer camp availability", "owner": "Catherine", "status": "pending" },
+    { "id": 2, "item": "Define minimum advance notice periods for time off requests", "owner": "Management", "status": "pending" },
+    { "id": 3, "item": "Define emergency coverage procedure and communication protocol", "owner": "Management", "status": "pending" },
+    { "id": 4, "item": "Confirm Cole's schedule for end of August onward", "owner": "Catherine", "status": "pending" },
+    { "id": 5, "item": "Add new client details to Boldt as onboarding completes", "owner": "Admin", "status": "ongoing" },
+    { "id": 6, "item": "Confirm Lyla's after school schedule for when school resumes in fall", "owner": "Catherine", "status": "pending" },
+    { "id": 7, "item": "Ensure all staff are submitting time off via JustWorks — communicate policy", "owner": "Admin", "status": "pending" },
+    { "id": 8, "item": "Update Cole's availability in system at end of August", "owner": "Admin", "status": "pending" }
+  ]
+}

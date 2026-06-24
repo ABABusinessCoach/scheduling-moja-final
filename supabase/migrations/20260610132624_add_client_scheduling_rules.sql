@@ -1,0 +1,1 @@
+ALTER TABLE clients ADD COLUMN IF NOT EXISTS scheduling_rules text[] NOT NULL DEFAULT '{}';

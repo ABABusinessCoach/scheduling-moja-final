@@ -12,6 +12,7 @@ import type {
   AssignmentShift,
   ShiftDefinition,
   BreakTime,
+  TimeOff,
 } from '../lib/types';
 import { computeRatioAlerts } from '../lib/scheduler';
 import { SHIFT_TIMES } from '../lib/types';
@@ -29,13 +30,16 @@ interface ScheduleContextType {
   sessionNotes: SessionNote[];
   ratioAlerts: RatioAlert[];
   shifts: ShiftDefinition[];
+  shiftsForWeek: ShiftDefinition[];
   breakTimes: BreakTime[];
+  timeOffForWeek: TimeOff[];
   loading: boolean;
   refreshSchedule: () => Promise<void>;
   refreshShiftsAndBreaks: () => Promise<void>;
+  refreshTimeOff: () => Promise<void>;
   setScheduleData: (s: Schedule | null) => void;
   handleUpdateAssignment: (assignmentId: string, staffId: string | null) => Promise<void>;
-  handleInsertAssignment: (day: DayOfWeek, shift: AssignmentShift, clientId: string, staffId: string) => Promise<void>;
+  handleInsertAssignment: (day: DayOfWeek, shift: AssignmentShift, clientId: string, staffId: string, timeStart?: string, timeEnd?: string) => Promise<void>;
   handleMoveAssignment: (assignmentId: string, newDay: DayOfWeek, newShift: AssignmentShift) => Promise<void>;
   handleDeleteAssignment: (assignmentId: string) => Promise<void>;
   handleUpdateEndTime: (assignmentId: string, newEndTime: string) => Promise<void>;
@@ -55,16 +59,18 @@ export function ScheduleProvider({ children }: { children: React.ReactNode }) {
   const [ratioAlerts, setRatioAlerts] = useState<RatioAlert[]>([]);
   const [shifts, setShifts] = useState<ShiftDefinition[]>([]);
   const [breakTimes, setBreakTimes] = useState<BreakTime[]>([]);
+  const [timeOffForWeek, setTimeOffForWeek] = useState<TimeOff[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => { loadBaseData(); }, []);
   useEffect(() => { loadSchedule(); }, [currentMonday]);
+  useEffect(() => { loadTimeOff(); }, [currentMonday]);
 
   useEffect(() => {
     if (staff.length > 0 && clients.length > 0) {
-      setRatioAlerts(computeRatioAlerts(staff, clients, allRestrictions));
+      setRatioAlerts(computeRatioAlerts(staff, clients, allRestrictions, shifts.filter((s) => s.is_active)));
     }
-  }, [staff, clients, allRestrictions]);
+  }, [staff, clients, allRestrictions, shifts]);
 
   async function loadBaseData() {
     const [staffRes, clientRes, restrictRes, shiftsRes, breaksRes] = await Promise.all([
@@ -148,6 +154,23 @@ export function ScheduleProvider({ children }: { children: React.ReactNode }) {
     setBreakTimes(breaksRes.data ?? []);
   }
 
+  const loadTimeOff = useCallback(async () => {
+    const weekStr = format(currentMonday, 'yyyy-MM-dd');
+    const weekEnd = new Date(currentMonday);
+    weekEnd.setDate(weekEnd.getDate() + 6);
+    const weekEndStr = format(weekEnd, 'yyyy-MM-dd');
+    const { data } = await supabase
+      .from('time_off')
+      .select('*')
+      .lte('date_start', weekEndStr)
+      .gte('date_end', weekStr);
+    setTimeOffForWeek(data ?? []);
+  }, [currentMonday]);
+
+  async function refreshTimeOff() {
+    await loadTimeOff();
+  }
+
   async function handleUpdateAssignment(assignmentId: string, staffId: string | null) {
     await supabase
       .from('schedule_assignments')
@@ -160,7 +183,7 @@ export function ScheduleProvider({ children }: { children: React.ReactNode }) {
     );
   }
 
-  async function handleInsertAssignment(day: DayOfWeek, shift: AssignmentShift, clientId: string, staffId: string) {
+  async function handleInsertAssignment(day: DayOfWeek, shift: AssignmentShift, clientId: string, staffId: string, timeStart?: string, timeEnd?: string) {
     if (!schedule) return;
     const times = SHIFT_TIMES[shift];
     const { data } = await supabase
@@ -169,8 +192,8 @@ export function ScheduleProvider({ children }: { children: React.ReactNode }) {
         schedule_id: schedule.id,
         day_of_week: day,
         shift,
-        time_start: times.start,
-        time_end: times.end,
+        time_start: timeStart ?? times.start,
+        time_end: timeEnd ?? times.end,
         staff_id: staffId,
         client_id: clientId,
         is_manual_override: true,
@@ -246,10 +269,33 @@ export function ScheduleProvider({ children }: { children: React.ReactNode }) {
         sessionNotes,
         ratioAlerts,
         shifts,
+        shiftsForWeek: (() => {
+          const mondayStr = format(currentMonday, 'yyyy-MM-dd');
+          const weekEnd = new Date(currentMonday);
+          weekEnd.setDate(weekEnd.getDate() + 6);
+          const weekEndStr = format(weekEnd, 'yyyy-MM-dd');
+          const activeShifts = shifts.filter((s) => s.is_active);
+          // Collect all days covered by seasonal (date-ranged) shifts active this week
+          const seasonalDays = new Set<number>(
+            activeShifts
+              .filter((s) => s.date_start && s.date_end && s.date_start <= weekEndStr && s.date_end >= mondayStr)
+              .flatMap((s) => s.days)
+          );
+          return activeShifts.filter((s) => {
+            if (s.date_start && s.date_end) {
+              return s.date_start <= weekEndStr && s.date_end >= mondayStr;
+            }
+            // Exclude non-seasonal shift if all its days are covered by seasonal shifts
+            if (seasonalDays.size > 0 && s.days.every((d) => seasonalDays.has(d))) return false;
+            return true;
+          });
+        })(),
         breakTimes,
+        timeOffForWeek,
         loading,
         refreshSchedule: loadSchedule,
         refreshShiftsAndBreaks,
+        refreshTimeOff,
         setScheduleData: setSchedule,
         handleUpdateAssignment,
         handleInsertAssignment,

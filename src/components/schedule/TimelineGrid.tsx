@@ -63,6 +63,13 @@ function getSlotAssignments(
   });
 }
 
+function hexToRgba(hex: string, alpha: number): string {
+  const r = parseInt(hex.slice(1, 3), 16);
+  const g = parseInt(hex.slice(3, 5), 16);
+  const b = parseInt(hex.slice(5, 7), 16);
+  return `rgba(${r},${g},${b},${alpha})`;
+}
+
 export function TimelineGrid({
   assignments,
   staff,
@@ -328,54 +335,76 @@ export function TimelineGrid({
                             onDragOver={(e) => { if (draggingStaffId) { e.preventDefault(); e.stopPropagation(); } }}
                             onDrop={(e) => handleCardDrop(e, a.id)}
                           >
-                            <div className={`w-full rounded px-1.5 py-1 text-xs transition-colors ${
-                              hasViolation
-                                ? 'bg-red-100 border border-red-300 text-red-800'
+                            {(() => {
+                              const clientColor = clientObj?.color || '#0ea5e9';
+                              const bgColor = hasViolation
+                                ? 'rgba(254,226,226,1)'
                                 : !a.staff_id
-                                ? 'bg-amber-100 border border-amber-300 text-amber-800'
-                                : isManual
-                                ? 'bg-blue-100 border border-blue-300 text-blue-800'
-                                : 'bg-aqua-100 border border-aqua-200 text-aqua-700'
-                            }`}>
-                              <div className="flex items-center gap-1 justify-between">
-                                <button
-                                  onClick={() => setEditingCell(isEditing ? null : cellId)}
-                                  className="flex-1 text-left min-w-0"
+                                ? 'rgba(254,243,199,1)'
+                                : hexToRgba(clientColor, 0.13);
+                              const borderColor = hasViolation
+                                ? 'rgba(252,165,165,1)'
+                                : !a.staff_id
+                                ? 'rgba(252,211,77,1)'
+                                : hexToRgba(clientColor, 0.4);
+                              const textColor = hasViolation
+                                ? '#991b1b'
+                                : !a.staff_id
+                                ? '#92400e'
+                                : clientColor;
+                              return (
+                                <div
+                                  className="w-full rounded px-1.5 py-1 text-xs transition-colors overflow-hidden"
+                                  style={{ backgroundColor: bgColor, border: `1px solid ${borderColor}` }}
                                 >
-                                  <div className="truncate">
-                                    {isFirst && (
-                                      <div className="flex items-center gap-0.5">
-                                        <GripVertical size={9} className="opacity-30 flex-shrink-0 cursor-grab" />
+                                  {/* Color bar */}
+                                  {!hasViolation && a.staff_id && (
+                                    <div
+                                      className="absolute left-0 top-0 bottom-0 w-1 rounded-l"
+                                      style={{ backgroundColor: clientColor }}
+                                    />
+                                  )}
+                                  <div className="pl-1.5 flex items-start gap-1 justify-between">
+                                    <button
+                                      onClick={() => setEditingCell(isEditing ? null : cellId)}
+                                      className="flex-1 text-left min-w-0"
+                                    >
+                                      <div className="truncate">
+                                        {isFirst && (
+                                          <div className="flex items-center gap-0.5">
+                                            <GripVertical size={9} className="opacity-30 flex-shrink-0 cursor-grab" />
+                                            <span className="font-bold block leading-tight truncate" style={{ color: textColor }}>
+                                              {staffObj ? staffObj.name : <em className="font-normal">Unassigned</em>}
+                                            </span>
+                                          </div>
+                                        )}
                                         {clientObj && (
-                                          <span className="font-semibold block leading-tight truncate">
+                                          <span className="truncate text-[10px] opacity-80" style={{ color: textColor }}>
                                             {clientObj.first_name} {clientObj.last_name}
                                           </span>
                                         )}
                                       </div>
-                                    )}
-                                    <span className="truncate opacity-80">
-                                      {staffObj ? staffObj.name : <em>Unassigned</em>}
-                                    </span>
-                                  </div>
-                                </button>
-                                <div className="flex items-center gap-0.5 flex-shrink-0">
-                                  {isFirst && (
-                                    <button
-                                      title={note?.submitted ? 'Note submitted' : 'Note missing'}
-                                      onClick={() => onToggleNote(a.id)}
-                                      className="transition-opacity hover:opacity-70"
-                                    >
-                                      {note?.submitted
-                                        ? <CheckCircle2 size={11} className="text-aqua-500" />
-                                        : <FileText size={11} className="text-amber-500" />
-                                      }
                                     </button>
-                                  )}
-                                  {hasViolation && <AlertTriangle size={10} className="text-red-600" />}
-                                  {isManual && <span className="text-blue-500 font-bold text-[10px]">M</span>}
+                                    <div className="flex items-center gap-0.5 flex-shrink-0">
+                                      {isFirst && (
+                                        <button
+                                          title={note?.submitted ? 'Note submitted' : 'Note missing'}
+                                          onClick={() => onToggleNote(a.id)}
+                                          className="transition-opacity hover:opacity-70"
+                                        >
+                                          {note?.submitted
+                                            ? <CheckCircle2 size={11} className="text-aqua-500" />
+                                            : <FileText size={11} className="text-amber-500" />
+                                          }
+                                        </button>
+                                      )}
+                                      {hasViolation && <AlertTriangle size={10} className="text-red-600" />}
+                                      {isManual && <span className="text-blue-500 font-bold text-[10px]">M</span>}
+                                    </div>
+                                  </div>
                                 </div>
-                              </div>
-                            </div>
+                              );
+                            })()}
 
                             {hasViolation && (
                               <div className="absolute bottom-full left-0 mb-1 z-20 bg-red-800 text-white text-xs rounded-lg px-2 py-1 w-52 shadow-lg pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity whitespace-normal">
@@ -441,25 +470,21 @@ export function TimelineGrid({
           {/* Legend */}
           <div className="mt-3 flex gap-4 flex-wrap px-1">
             <div className="flex items-center gap-1.5 text-xs text-slate-500">
-              <div className="w-3 h-3 rounded bg-aqua-100 border border-aqua-200" />Auto-assigned
-            </div>
-            <div className="flex items-center gap-1.5 text-xs text-slate-500">
-              <div className="w-3 h-3 rounded bg-blue-100 border border-blue-200" />Manual (M)
+              <div className="w-3 h-3 rounded border border-slate-200 bg-white relative overflow-hidden">
+                <div className="absolute left-0 top-0 bottom-0 w-1 bg-blue-500" />
+              </div>Client color = who they are
             </div>
             <div className="flex items-center gap-1.5 text-xs text-slate-500">
               <div className="w-3 h-3 rounded bg-amber-100 border border-amber-200" />Unassigned
             </div>
             <div className="flex items-center gap-1.5 text-xs text-slate-500">
-              <div className="w-3 h-3 rounded bg-rose-200" />Break
+              <div className="w-3 h-3 rounded bg-red-100 border border-red-200" />Violation
             </div>
             <div className="flex items-center gap-1.5 text-xs text-slate-500">
               <CheckCircle2 size={12} className="text-aqua-400" />Note submitted
             </div>
             <div className="flex items-center gap-1.5 text-xs text-slate-500">
               <FileText size={12} className="text-amber-500" />Note missing
-            </div>
-            <div className="flex items-center gap-1.5 text-xs text-slate-500">
-              <AlertTriangle size={12} className="text-red-500" />Violation
             </div>
             <div className="flex items-center gap-1.5 text-xs text-slate-400">
               <GripVertical size={12} />Drag to move

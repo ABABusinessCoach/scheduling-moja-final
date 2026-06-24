@@ -48,8 +48,14 @@ export function ClientView({ clients, assignments }: ClientViewProps) {
 
         return (
           <div key={c.id} className="bg-white rounded-xl border border-slate-200 overflow-hidden">
-            <div className="flex items-center gap-3 px-4 py-3 border-b border-slate-100 bg-slate-50">
-              <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center text-blue-700 font-semibold text-sm">
+            <div
+              className="flex items-center gap-3 px-4 py-3 border-b border-slate-100 bg-slate-50"
+              style={{ borderLeftWidth: 4, borderLeftStyle: 'solid', borderLeftColor: c.color || '#0ea5e9' }}
+            >
+              <div
+                className="w-8 h-8 rounded-full flex items-center justify-center font-semibold text-sm flex-shrink-0"
+                style={{ backgroundColor: (c.color || '#0ea5e9') + '28', color: c.color || '#0ea5e9' }}
+              >
                 {c.first_name.slice(0, 1)}{c.last_name.slice(0, 1)}
               </div>
               <div>

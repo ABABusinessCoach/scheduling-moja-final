@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { supabase } from '../../lib/supabase';
 import type { ShiftDefinition, BreakTime, DayOfWeek } from '../../lib/types';
 import { DAY_SHORT, TIME_SLOTS } from '../../lib/types';
-import { X, Plus, Trash2, Clock, Coffee } from 'lucide-react';
+import { X, Plus, Trash2, Clock, Coffee, CalendarRange, Pencil, Check } from 'lucide-react';
 
 interface ShiftManagerProps {
   shifts: ShiftDefinition[];
@@ -80,12 +80,43 @@ export function ShiftManager({ shifts, breakTimes, onClose, onRefresh }: ShiftMa
   const [newShiftEnd, setNewShiftEnd] = useState('14:30');
   const [newShiftDays, setNewShiftDays] = useState<number[]>([1, 2, 3, 4, 5]);
   const [newShiftColor, setNewShiftColor] = useState(SHIFT_COLORS[0]);
+  const [newShiftDateStart, setNewShiftDateStart] = useState('');
+  const [newShiftDateEnd, setNewShiftDateEnd] = useState('');
 
   // Break form state
   const [newBreakName, setNewBreakName] = useState('');
   const [newBreakStart, setNewBreakStart] = useState('10:00');
   const [newBreakEnd, setNewBreakEnd] = useState('10:30');
   const [newBreakDays, setNewBreakDays] = useState<number[]>([1, 2, 3, 4, 5]);
+
+  // Inline break editing state
+  const [editingBreakId, setEditingBreakId] = useState<string | null>(null);
+  const [editBreakName, setEditBreakName] = useState('');
+  const [editBreakStart, setEditBreakStart] = useState('');
+  const [editBreakEnd, setEditBreakEnd] = useState('');
+  const [editBreakDays, setEditBreakDays] = useState<number[]>([]);
+
+  function startEditBreak(b: BreakTime) {
+    setEditingBreakId(b.id);
+    setEditBreakName(b.name);
+    setEditBreakStart(b.time_start.slice(0, 5));
+    setEditBreakEnd(b.time_end.slice(0, 5));
+    setEditBreakDays(b.days);
+  }
+
+  async function saveBreakEdit() {
+    if (!editingBreakId) return;
+    setSaving(true);
+    await supabase.from('break_times').update({
+      name: editBreakName.trim(),
+      time_start: editBreakStart,
+      time_end: editBreakEnd,
+      days: editBreakDays,
+    }).eq('id', editingBreakId);
+    await onRefresh();
+    setEditingBreakId(null);
+    setSaving(false);
+  }
 
   async function addShift() {
     if (!newShiftLabel.trim() || newShiftDays.length === 0) return;
@@ -100,12 +131,16 @@ export function ShiftManager({ shifts, breakTimes, onClose, onRefresh }: ShiftMa
       color: newShiftColor,
       sort_order: shifts.length,
       is_active: true,
+      date_start: newShiftDateStart || null,
+      date_end: newShiftDateEnd || null,
     });
     await onRefresh();
     setNewShiftLabel('');
     setNewShiftStart('08:00');
     setNewShiftEnd('14:30');
     setNewShiftDays([1, 2, 3, 4, 5]);
+    setNewShiftDateStart('');
+    setNewShiftDateEnd('');
     setSaving(false);
   }
 
@@ -185,10 +220,20 @@ export function ShiftManager({ shifts, breakTimes, onClose, onRefresh }: ShiftMa
                     <div key={s.id} className="flex items-center gap-3 p-3 bg-slate-50 rounded-xl border border-slate-100">
                       <div className="w-3 h-3 rounded-full flex-shrink-0" style={{ background: s.color }} />
                       <div className="flex-1 min-w-0">
-                        <div className="text-sm font-semibold text-slate-800 truncate">{s.label}</div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-semibold text-slate-800 truncate">{s.label}</span>
+                          {s.date_start && s.date_end && (
+                            <span className="flex items-center gap-1 px-1.5 py-0.5 bg-sky-100 text-sky-700 rounded text-[10px] font-semibold flex-shrink-0">
+                              <CalendarRange size={9} /> Seasonal
+                            </span>
+                          )}
+                        </div>
                         <div className="text-xs text-slate-500">
                           {s.time_start.slice(0, 5)} – {s.time_end.slice(0, 5)} &middot;{' '}
                           {s.days.map((d) => DAY_SHORT[d as DayOfWeek]).join(', ')}
+                          {s.date_start && s.date_end && (
+                            <span className="ml-1 text-sky-600">· {s.date_start} – {s.date_end}</span>
+                          )}
                         </div>
                       </div>
                       <button
@@ -250,6 +295,32 @@ export function ShiftManager({ shifts, breakTimes, onClose, onRefresh }: ShiftMa
                     ))}
                   </div>
                 </div>
+                <div>
+                  <label className="form-label flex items-center gap-1">
+                    <CalendarRange size={12} /> Seasonal Date Range <span className="text-slate-400 font-normal">(optional)</span>
+                  </label>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-[10px] text-slate-400 font-medium uppercase tracking-wide block mb-1">From</label>
+                      <input
+                        type="date"
+                        className="form-input py-1.5 text-xs"
+                        value={newShiftDateStart}
+                        onChange={(e) => setNewShiftDateStart(e.target.value)}
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] text-slate-400 font-medium uppercase tracking-wide block mb-1">To</label>
+                      <input
+                        type="date"
+                        className="form-input py-1.5 text-xs"
+                        value={newShiftDateEnd}
+                        onChange={(e) => setNewShiftDateEnd(e.target.value)}
+                      />
+                    </div>
+                  </div>
+                  <p className="text-[10px] text-slate-400 mt-1">Leave blank for a permanent shift. Set dates for seasonal shifts like summer.</p>
+                </div>
                 <button
                   onClick={addShift}
                   disabled={saving || !newShiftLabel.trim() || newShiftDays.length === 0}
@@ -265,26 +336,74 @@ export function ShiftManager({ shifts, breakTimes, onClose, onRefresh }: ShiftMa
               {breakTimes.length > 0 && (
                 <div className="space-y-2">
                   {breakTimes.map((b) => (
-                    <div key={b.id} className="flex items-center gap-3 p-3 bg-rose-50 rounded-xl border border-rose-100">
-                      <div className="flex-1 min-w-0">
-                        <div className="text-sm font-semibold text-slate-800">{b.name}</div>
-                        <div className="text-xs text-slate-500">
-                          {b.time_start.slice(0, 5)} – {b.time_end.slice(0, 5)} &middot;{' '}
-                          {b.days.length === 0 ? 'All days' : b.days.map((d) => DAY_SHORT[d as DayOfWeek]).join(', ')}
+                    <div key={b.id} className="bg-rose-50 rounded-xl border border-rose-100 overflow-hidden">
+                      {editingBreakId === b.id ? (
+                        <div className="p-3 space-y-2">
+                          <input
+                            className="form-input text-sm py-1.5"
+                            value={editBreakName}
+                            onChange={(e) => setEditBreakName(e.target.value)}
+                          />
+                          <div className="grid grid-cols-2 gap-2">
+                            <div>
+                              <label className="text-[10px] text-slate-400 font-medium uppercase tracking-wide block mb-1">Start</label>
+                              <TimeSelect value={editBreakStart} onChange={setEditBreakStart} label="Edit break start" />
+                            </div>
+                            <div>
+                              <label className="text-[10px] text-slate-400 font-medium uppercase tracking-wide block mb-1">End</label>
+                              <TimeSelect value={editBreakEnd} onChange={setEditBreakEnd} label="Edit break end" />
+                            </div>
+                          </div>
+                          <div>
+                            <label className="text-[10px] text-slate-400 font-medium uppercase tracking-wide block mb-1">Days (empty = all)</label>
+                            <DayPills selected={editBreakDays} onChange={setEditBreakDays} days={ALL_DAYS} />
+                          </div>
+                          <div className="flex gap-2 pt-1">
+                            <button
+                              onClick={saveBreakEdit}
+                              disabled={saving}
+                              className="flex items-center gap-1 px-3 py-1.5 bg-slate-900 text-white rounded-lg text-xs font-semibold hover:bg-slate-800 transition-colors disabled:opacity-50"
+                            >
+                              <Check size={12} /> Save
+                            </button>
+                            <button
+                              onClick={() => setEditingBreakId(null)}
+                              className="px-3 py-1.5 border border-slate-200 rounded-lg text-xs text-slate-600 hover:bg-slate-50"
+                            >
+                              Cancel
+                            </button>
+                          </div>
                         </div>
-                      </div>
-                      <button
-                        onClick={() => toggleBreakActive(b.id, b.is_active)}
-                        className={`text-xs px-2 py-1 rounded-full font-semibold transition-colors ${b.is_active ? 'bg-rose-100 text-rose-700 hover:bg-rose-200' : 'bg-slate-100 text-slate-400 hover:bg-slate-200'}`}
-                      >
-                        {b.is_active ? 'Active' : 'Off'}
-                      </button>
-                      <button
-                        onClick={() => deleteBreak(b.id)}
-                        className="text-slate-300 hover:text-red-500 transition-colors p-1"
-                      >
-                        <Trash2 size={14} />
-                      </button>
+                      ) : (
+                        <div className="flex items-center gap-3 p-3">
+                          <div className="flex-1 min-w-0">
+                            <div className="text-sm font-semibold text-slate-800">{b.name}</div>
+                            <div className="text-xs text-slate-500">
+                              {b.time_start.slice(0, 5)} – {b.time_end.slice(0, 5)} &middot;{' '}
+                              {b.days.length === 0 ? 'All days' : b.days.map((d) => DAY_SHORT[d as DayOfWeek]).join(', ')}
+                            </div>
+                          </div>
+                          <button
+                            onClick={() => startEditBreak(b)}
+                            className="text-slate-400 hover:text-slate-600 transition-colors p-1"
+                            title="Edit break"
+                          >
+                            <Pencil size={14} />
+                          </button>
+                          <button
+                            onClick={() => toggleBreakActive(b.id, b.is_active)}
+                            className={`text-xs px-2 py-1 rounded-full font-semibold transition-colors ${b.is_active ? 'bg-rose-100 text-rose-700 hover:bg-rose-200' : 'bg-slate-100 text-slate-400 hover:bg-slate-200'}`}
+                          >
+                            {b.is_active ? 'Active' : 'Off'}
+                          </button>
+                          <button
+                            onClick={() => deleteBreak(b.id)}
+                            className="text-slate-300 hover:text-red-500 transition-colors p-1"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
+                      )}
                     </div>
                   ))}
                 </div>

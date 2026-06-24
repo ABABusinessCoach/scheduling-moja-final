@@ -71,9 +71,15 @@ export function StaffView({ staff, assignments }: StaffViewProps) {
                           <td key={day} className="px-2 py-2.5 text-center">
                             {client ? (
                               <div className="flex flex-col items-center gap-0.5">
-                                <span className={`font-medium ${assignment.violation_reason ? 'text-red-600' : 'text-slate-700'}`}>
-                                  {client.first_name} {client.last_name}
-                                </span>
+                                <div className="flex items-center gap-1">
+                                  <span
+                                    className="w-2 h-2 rounded-full flex-shrink-0"
+                                    style={{ backgroundColor: client.color || '#0ea5e9' }}
+                                  />
+                                  <span className={`font-medium ${assignment.violation_reason ? 'text-red-600' : 'text-slate-700'}`}>
+                                    {client.first_name} {client.last_name}
+                                  </span>
+                                </div>
                                 {assignment.violation_reason && (
                                   <AlertTriangle size={11} className="text-red-500" title={assignment.violation_reason} />
                                 )}

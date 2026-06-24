@@ -10,6 +10,22 @@ import type {
 import { DAY_SHORT, DAY_NAMES, SHIFT_TIMES, timeWindowCovers, ALL_END_TIMES, formatTime } from '../../lib/types';
 import { AlertTriangle, ChevronDown, GripVertical, Trash2, Clock } from 'lucide-react';
 
+function hexToRgba(hex: string, alpha: number): string {
+  const clean = hex.replace('#', '');
+  const r = parseInt(clean.slice(0, 2), 16);
+  const g = parseInt(clean.slice(2, 4), 16);
+  const b = parseInt(clean.slice(4, 6), 16);
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
+function darkenHex(hex: string): string {
+  const clean = hex.replace('#', '');
+  const r = parseInt(clean.slice(0, 2), 16);
+  const g = parseInt(clean.slice(2, 4), 16);
+  const b = parseInt(clean.slice(4, 6), 16);
+  return `rgb(${Math.floor(r * 0.45)}, ${Math.floor(g * 0.45)}, ${Math.floor(b * 0.45)})`;
+}
+
 interface WeeklyGridProps {
   assignments: ScheduleAssignment[];
   staff: Staff[];
@@ -185,7 +201,11 @@ export function WeeklyGrid({
                   className="grid border border-slate-200 border-t-0 hover:bg-slate-50/50 transition-colors"
                   style={{ gridTemplateColumns: `140px repeat(${activeDays.length}, 1fr)` }}
                 >
-                  <div className="px-3 py-3 flex items-center">
+                  <div className="px-3 py-3 flex items-center gap-2">
+                    <div
+                      className="w-2.5 h-2.5 rounded-full flex-shrink-0"
+                      style={{ backgroundColor: client.color || '#0ea5e9' }}
+                    />
                     <div>
                       <div className="text-sm font-medium text-slate-800">{client.first_name} {client.last_name}</div>
                       {client.no_male_therapists && <div className="text-xs text-amber-600">F only</div>}
@@ -207,12 +227,13 @@ export function WeeklyGrid({
                     const endTimeOptions = ALL_END_TIMES.filter(
                       (t) => assignment?.time_start && t > assignment.time_start.slice(0, 5)
                     );
+                    const clientColor = client.color || '#0ea5e9';
 
                     return (
                       <div
                         key={day}
                         className={`px-2 py-2.5 border-l border-slate-200 relative transition-colors ${
-                          !attends ? 'bg-slate-50' : isDragTarget ? 'bg-aqua-50 ring-2 ring-inset ring-aqua-400' : ''
+                          !attends ? 'bg-slate-50' : isDragTarget ? 'ring-2 ring-inset ring-aqua-400' : ''
                         }`}
                         onDragOver={(e) => attends && handleDragOver(e, dropKey)}
                         onDragLeave={() => setDragOver(null)}
@@ -231,15 +252,18 @@ export function WeeklyGrid({
                               >
                                 <button
                                   onClick={() => setEditingCell(isEditing ? null : cellId)}
-                                  className={`w-full text-left px-2 py-1.5 rounded-lg text-xs font-medium transition-colors flex items-center gap-1 cursor-grab active:cursor-grabbing ${
+                                  className="w-full text-left px-2 py-1.5 rounded-lg text-xs font-medium transition-colors flex items-center gap-1 cursor-grab active:cursor-grabbing border"
+                                  style={
                                     hasViolation
-                                      ? 'bg-red-50 border border-red-200 text-red-700 hover:bg-red-100'
+                                      ? { backgroundColor: '#fef2f2', borderColor: '#fca5a5', color: '#b91c1c' }
                                       : !assignment.staff_id
-                                      ? 'bg-amber-50 border border-amber-200 text-amber-600 hover:bg-amber-100'
-                                      : isManual
-                                      ? 'bg-blue-50 border border-blue-200 text-blue-700 hover:bg-blue-100'
-                                      : 'bg-aqua-50 border border-aqua-200 text-aqua-600 hover:bg-aqua-100'
-                                  }`}
+                                      ? { backgroundColor: '#fffbeb', borderColor: '#fcd34d', color: '#b45309' }
+                                      : {
+                                          backgroundColor: hexToRgba(clientColor, 0.15),
+                                          borderColor: hexToRgba(clientColor, 0.45),
+                                          color: darkenHex(clientColor),
+                                        }
+                                  }
                                 >
                                   <GripVertical size={10} className="text-current opacity-40 flex-shrink-0 -ml-0.5" />
                                   <span className="flex-1 truncate">
@@ -327,13 +351,10 @@ export function WeeklyGrid({
         {/* Legend */}
         <div className="border border-slate-200 border-t-0 rounded-b-xl px-4 py-3 bg-white flex gap-4 flex-wrap">
           <div className="flex items-center gap-1.5 text-xs text-slate-500">
-            <div className="w-3 h-3 rounded bg-aqua-100 border border-aqua-200" />Auto-assigned
+            <div className="w-3 h-3 rounded" style={{ backgroundColor: 'rgba(14,165,233,0.15)', border: '1px solid rgba(14,165,233,0.45)' }} />Client color = assigned
           </div>
           <div className="flex items-center gap-1.5 text-xs text-slate-500">
-            <div className="w-3 h-3 rounded bg-blue-100 border border-blue-200" />Manual
-          </div>
-          <div className="flex items-center gap-1.5 text-xs text-slate-500">
-            <div className="w-3 h-3 rounded bg-amber-100 border border-amber-200" />Unassigned
+            <div className="w-3 h-3 rounded bg-amber-100 border border-amber-300" />Unassigned
           </div>
           <div className="flex items-center gap-1.5 text-xs text-slate-500">
             <AlertTriangle size={12} className="text-red-500" />Violation

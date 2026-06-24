@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { supabase } from '../../lib/supabase';
 import type { Client, ClientAvailability, DayOfWeek } from '../../lib/types';
 import { DAY_SHORT } from '../../lib/types';
-import { Plus, Pencil, Trash2, UserRound } from 'lucide-react';
+import { Plus, Pencil, Trash2, UserRound, ShieldAlert } from 'lucide-react';
 import { ClientForm } from './ClientForm';
 import { useToast } from '../../lib/toast';
 
@@ -100,7 +100,10 @@ export function ClientList() {
                   !c.is_active ? 'opacity-50 border-slate-200' : 'border-slate-200 hover:border-slate-300'
                 }`}
               >
-                <div className="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center flex-shrink-0 text-blue-700 font-semibold text-sm">
+                <div
+                  className="w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0 font-semibold text-sm flex-shrink-0"
+                  style={{ backgroundColor: (c.color || '#0ea5e9') + '28', color: c.color || '#0ea5e9' }}
+                >
                   {c.first_name.slice(0, 1)}{c.last_name.slice(0, 1)}
                 </div>
 
@@ -174,6 +177,18 @@ export function ClientList() {
                       </span>
                     )}
                   </div>
+
+                  {/* Scheduling rules */}
+                  {(c.scheduling_rules ?? []).length > 0 && (
+                    <div className="flex flex-wrap gap-1.5 mt-2">
+                      {(c.scheduling_rules ?? []).map((rule) => (
+                        <span key={rule} className="flex items-center gap-1 text-xs text-orange-700 bg-orange-50 px-2 py-0.5 rounded-full border border-orange-200">
+                          <ShieldAlert size={10} className="flex-shrink-0" />
+                          {rule}
+                        </span>
+                      ))}
+                    </div>
+                  )}
                 </div>
 
                 <div className="flex gap-1">

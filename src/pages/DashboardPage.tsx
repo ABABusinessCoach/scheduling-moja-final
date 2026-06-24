@@ -10,7 +10,8 @@ import type {
   StaffClientRestriction,
   RatioAlert,
 } from '../lib/types';
-import { DAY_NAMES } from '../lib/types';
+import { DAY_NAMES, SHIFT_LABELS, SHIFT_TIMES, slotDuration } from '../lib/types';
+import type { AssignmentShift } from '../lib/types';
 import {
   Users,
   UserRound,
@@ -22,6 +23,9 @@ import {
   ShieldAlert,
   ArrowUpRight,
   Wand2,
+  Clock,
+  X,
+  Info,
 } from 'lucide-react';
 
 interface DashboardPageProps {
@@ -36,6 +40,7 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
   const [assignments, setAssignments] = useState<ScheduleAssignment[]>([]);
   const [ratioAlerts, setRatioAlerts] = useState<RatioAlert[]>([]);
   const [loading, setLoading] = useState(true);
+  const [atRiskDetail, setAtRiskDetail] = useState<RatioAlert | null>(null);
 
   useEffect(() => { loadData(); }, []);
 
@@ -213,22 +218,26 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mb-3">
             {ratioAlerts.map((alert, i) => (
-              <div
+              <button
                 key={i}
-                className="bg-white border border-red-100 rounded-xl px-3.5 py-3 flex items-center justify-between"
+                onClick={() => setAtRiskDetail(alert)}
+                className="bg-white border border-red-100 rounded-xl px-3.5 py-3 flex items-center justify-between hover:bg-red-50 hover:border-red-300 transition-colors group text-left"
                 style={{ boxShadow: '0 1px 3px rgba(239,68,68,0.06)' }}
               >
                 <div>
                   <span className="font-bold text-slate-800 text-sm">{DAY_NAMES[alert.day]}</span>
-                  <span className="text-slate-400 text-sm"> — {alert.shift}</span>
+                  <span className="text-slate-400 text-sm"> — {SHIFT_LABELS[alert.shift as AssignmentShift] ?? alert.shift}</span>
                   <div className="text-xs text-slate-400 mt-0.5">
                     {alert.clientCount} clients &middot; {alert.eligibleStaffCount} eligible staff
                   </div>
                 </div>
-                <span className="ml-3 w-8 h-8 rounded-lg bg-red-50 border border-red-200 flex items-center justify-center text-xs font-bold text-red-700 flex-shrink-0">
-                  -{alert.deficit}
-                </span>
-              </div>
+                <div className="flex items-center gap-2 ml-3 flex-shrink-0">
+                  <span className="w-8 h-8 rounded-lg bg-red-50 border border-red-200 flex items-center justify-center text-xs font-bold text-red-700">
+                    -{alert.deficit}
+                  </span>
+                  <Info size={13} className="text-red-300 group-hover:text-red-500 transition-colors" />
+                </div>
+              </button>
             ))}
           </div>
           <button
@@ -241,7 +250,7 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
       )}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        {/* Hours tracker */}
+        {/* Staff hours tracker */}
         {hoursData.length > 0 && (
           <div
             className="lg:col-span-2 bg-white rounded-2xl border border-slate-200/70 p-5"
@@ -310,6 +319,53 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
 
         {/* Quick actions */}
         <div className="flex flex-col gap-3">
+          {/* Client auth hours */}
+          {clients.filter((c) => c.authorized_hours_per_week).length > 0 && (
+            <div className="bg-white rounded-2xl border border-slate-200/70 p-5" style={{ boxShadow: '0 1px 4px rgba(0,0,0,0.05)' }}>
+              <div className="flex items-center gap-2 mb-4">
+                <div className="w-8 h-8 rounded-xl bg-blue-50 flex items-center justify-center">
+                  <Clock size={14} className="text-blue-500" />
+                </div>
+                <div>
+                  <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Client Auth. Hours</p>
+                  <p className="text-xs font-semibold text-slate-700">This week</p>
+                </div>
+              </div>
+              <div className="space-y-3">
+                {clients.filter((c) => c.is_active && c.authorized_hours_per_week).map((c) => {
+                  const scheduled = assignments
+                    .filter((a) => a.client_id === c.id)
+                    .reduce((sum, a) => {
+                      if (a.time_start && a.time_end) return sum + slotDuration(a.time_start.slice(0, 5), a.time_end.slice(0, 5));
+                      return sum + SHIFT_TIMES[a.shift].hours;
+                    }, 0);
+                  const cap = c.authorized_hours_per_week!;
+                  const pct = Math.min((scheduled / cap) * 100, 100);
+                  const over = scheduled > cap;
+                  const close = scheduled >= cap * 0.9 && !over;
+                  return (
+                    <div key={c.id}>
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="text-xs font-medium text-slate-600 truncate max-w-[100px]">{c.first_name} {c.last_name}</span>
+                        <div className="flex items-center gap-1">
+                          {(over || close) && <AlertTriangle size={10} className={over ? 'text-red-500' : 'text-amber-400'} />}
+                          <span className={`text-xs font-bold tabular-nums ${over ? 'text-red-600' : close ? 'text-amber-600' : 'text-slate-500'}`}>
+                            {scheduled.toFixed(1)}h / {cap}h
+                          </span>
+                        </div>
+                      </div>
+                      <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                        <div
+                          className={`h-full rounded-full transition-all duration-500 ${over ? 'bg-red-500' : close ? 'bg-amber-400' : 'bg-blue-400'}`}
+                          style={{ width: `${pct}%` }}
+                        />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
           <button
             onClick={() => onNavigate('schedule')}
             className="flex-1 rounded-2xl p-5 text-left transition-all duration-200 hover:-translate-y-0.5 group"
@@ -354,6 +410,171 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
             <div className="text-xs font-medium text-slate-400">
               Get recommendations when staff or clients cancel
             </div>
+          </button>
+        </div>
+      </div>
+
+      {/* At-Risk Detail Modal */}
+      {atRiskDetail && (
+        <AtRiskDetailModal
+          alert={atRiskDetail}
+          staff={staff}
+          clients={clients}
+          restrictions={restrictions}
+          onClose={() => setAtRiskDetail(null)}
+          onNavigate={onNavigate}
+        />
+      )}
+    </div>
+  );
+}
+
+interface AtRiskDetailModalProps {
+  alert: RatioAlert;
+  staff: Staff[];
+  clients: Client[];
+  restrictions: StaffClientRestriction[];
+  onClose: () => void;
+  onNavigate: (page: string) => void;
+}
+
+function AtRiskDetailModal({ alert, staff, clients, restrictions, onClose, onNavigate }: AtRiskDetailModalProps) {
+  const shiftLabel = SHIFT_LABELS[alert.shift as AssignmentShift] ?? alert.shift;
+
+  // Find which clients attend on this day/shift
+  const affectedClients = clients.filter((c) => {
+    if (!c.is_active) return false;
+    const avail = c.availability ?? [];
+    return avail.some((a) => a.day_of_week === alert.day && a.shift === alert.shift);
+  });
+
+  // For each client, find why staff are blocked
+  function getBlockingReasons(client: Client): string[] {
+    const reasons: string[] = [];
+    const eligible = staff.filter((s) => {
+      if (!s.is_active) return false;
+      const sAvail = s.availability ?? [];
+      const hasAvail = sAvail.some((a) => a.day_of_week === alert.day && a.shift === alert.shift);
+      if (!hasAvail) return false;
+      const restricted = restrictions.some((r) => r.staff_id === s.id && r.client_id === client.id);
+      if (restricted) return false;
+      if (client.no_male_therapists && s.gender === 'male') return false;
+      return true;
+    });
+
+    const restricted = restrictions.filter((r) => r.client_id === client.id);
+    if (restricted.length > 0) {
+      const names = restricted.map((r) => staff.find((s) => s.id === r.staff_id)?.name ?? 'Unknown').filter(Boolean);
+      if (names.length) reasons.push(`Restricted from: ${names.join(', ')}`);
+    }
+    if (client.no_male_therapists) {
+      const blockedByGender = staff.filter((s) => s.gender === 'male' && s.is_active);
+      if (blockedByGender.length > 0) reasons.push('Requires female therapist only');
+    }
+    if (eligible.length === 0) {
+      reasons.push('No eligible staff available for this shift');
+    } else if (eligible.length < 2) {
+      reasons.push(`Only ${eligible.length} staff can cover this client`);
+    }
+    return reasons;
+  }
+
+  const noShiftStaff = staff.filter((s) => {
+    if (!s.is_active) return false;
+    const avail = s.availability ?? [];
+    return !avail.some((a) => a.day_of_week === alert.day && a.shift === alert.shift);
+  });
+
+  return (
+    <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={onClose}>
+      <div
+        className="bg-white rounded-2xl shadow-2xl w-full max-w-md max-h-[80vh] flex flex-col"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="flex items-start justify-between p-5 pb-4 border-b border-slate-100">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-red-100 flex items-center justify-center flex-shrink-0">
+              <ShieldAlert size={18} className="text-red-600" />
+            </div>
+            <div>
+              <h2 className="font-bold text-slate-900 text-base">{DAY_NAMES[alert.day]} — {shiftLabel}</h2>
+              <p className="text-xs text-red-500 font-medium mt-0.5">
+                {alert.clientCount} clients · {alert.eligibleStaffCount} eligible staff · needs {alert.deficit} more
+              </p>
+            </div>
+          </div>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-600 transition-colors mt-0.5">
+            <X size={18} />
+          </button>
+        </div>
+
+        {/* Body */}
+        <div className="flex-1 overflow-y-auto p-5 space-y-5">
+          {/* Affected clients */}
+          {affectedClients.length > 0 && (
+            <div>
+              <h3 className="text-xs font-bold uppercase tracking-widest text-slate-400 mb-2">Affected Clients</h3>
+              <div className="space-y-2">
+                {affectedClients.map((c) => {
+                  const reasons = getBlockingReasons(c);
+                  return (
+                    <div key={c.id} className="rounded-xl border border-slate-200 p-3">
+                      <div className="font-semibold text-slate-800 text-sm">{c.first_name} {c.last_name}</div>
+                      {reasons.length > 0 ? (
+                        <ul className="mt-1.5 space-y-1">
+                          {reasons.map((r, i) => (
+                            <li key={i} className="flex items-start gap-1.5 text-xs text-red-600">
+                              <AlertTriangle size={11} className="flex-shrink-0 mt-0.5" />
+                              {r}
+                            </li>
+                          ))}
+                        </ul>
+                      ) : (
+                        <p className="text-xs text-slate-400 mt-1">No specific blocks — general understaffing</p>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Staff not available */}
+          {noShiftStaff.length > 0 && (
+            <div>
+              <h3 className="text-xs font-bold uppercase tracking-widest text-slate-400 mb-2">Staff Without This Shift</h3>
+              <div className="flex flex-wrap gap-1.5">
+                {noShiftStaff.map((s) => (
+                  <span key={s.id} className="px-2.5 py-1 bg-slate-100 rounded-lg text-xs text-slate-500 font-medium">
+                    {s.name}
+                  </span>
+                ))}
+              </div>
+              <p className="text-xs text-slate-400 mt-2">These staff members have no availability set for this shift.</p>
+            </div>
+          )}
+
+          {affectedClients.length === 0 && (
+            <p className="text-sm text-slate-400 text-center py-4">
+              No clients with explicit availability for this slot found. Check client availability settings.
+            </p>
+          )}
+        </div>
+
+        {/* Footer actions */}
+        <div className="p-4 border-t border-slate-100 flex gap-2">
+          <button
+            onClick={() => { onClose(); onNavigate('staff'); }}
+            className="flex-1 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-sm font-semibold transition-colors"
+          >
+            Edit Staff Availability
+          </button>
+          <button
+            onClick={() => { onClose(); onNavigate('schedule'); }}
+            className="flex-1 py-2 rounded-xl bg-red-600 hover:bg-red-700 text-white text-sm font-semibold transition-colors"
+          >
+            Fix in Schedule
           </button>
         </div>
       </div>

@@ -5,10 +5,14 @@ import {
   StaffClientRestriction,
   DayOfWeek,
   AssignmentShift,
+  ShiftDefinition,
   SHIFT_TIMES,
   SHIFT_DAYS,
   StaffHours,
   RatioAlert,
+  CoverageRecommendation,
+  StaffCancellationAnalysis,
+  TimeOff,
   slotDuration,
   timeWindowCovers,
   RampUpEntry,
@@ -18,41 +22,58 @@ function shiftTimes(shift: AssignmentShift): { start: string; end: string } {
   return { start: SHIFT_TIMES[shift].start, end: SHIFT_TIMES[shift].end };
 }
 
-function staffCanWorkShift(staff: Staff, day: DayOfWeek, shift: AssignmentShift): boolean {
-  const session = shiftTimes(shift);
+// Check if staff availability covers an explicit time window on a given day
+function staffCanWorkWindow(staff: Staff, day: DayOfWeek, wStart: string, wEnd: string): boolean {
   const avail = staff.availability ?? [];
   return avail.some((a) => {
     if (a.day_of_week !== day) return false;
     if (a.time_start && a.time_end) {
-      return timeWindowCovers(a.time_start.slice(0, 5), a.time_end.slice(0, 5), session.start, session.end);
+      return timeWindowCovers(a.time_start.slice(0, 5), a.time_end.slice(0, 5), wStart, wEnd);
     }
-    return a.shift === 'FULL' || a.shift === shift;
+    // Fallback: named shift coverage
+    const key = a.shift as AssignmentShift;
+    if (SHIFT_TIMES[key]) {
+      return timeWindowCovers(SHIFT_TIMES[key].start, SHIFT_TIMES[key].end, wStart, wEnd);
+    }
+    return a.shift === 'FULL';
   });
 }
 
-function clientCanAttendShift(client: Client, day: DayOfWeek, shift: AssignmentShift): boolean {
-  const session = shiftTimes(shift);
+// Check if client availability covers an explicit time window on a given day
+function clientCanAttendWindow(client: Client, day: DayOfWeek, wStart: string, wEnd: string): boolean {
+  const isEveningWindow = wStart >= '15:00';
+
+  // Respect program_type: daytime clients skip EVE; afterschool clients skip daytime
+  if (client.program_type === 'daytime' && isEveningWindow) return false;
+  if (client.program_type === 'afterschool' && !isEveningWindow) return false;
+
   const avail = client.availability ?? [];
-
   if (avail.length === 0) {
-    // Legacy fallback: use client_attendance + shift_type (weekday only)
     if (day === 6) return false;
-    const attendsDay = (client.attendance ?? []).some((a) => a.day_of_week === day);
-    if (!attendsDay) return false;
-    if (client.shift_type === 'FULL') return shift === 'AM' || shift === 'PM';
-    if (client.shift_type === 'AM' && shift === 'AM') return true;
-    if (client.shift_type === 'PM' && shift === 'PM') return true;
-    if (client.shift_type === 'CUSTOM') return shift === 'AM';
-    return false;
+    return (client.attendance ?? []).some((a) => a.day_of_week === day);
   }
-
   return avail.some((a) => {
     if (a.day_of_week !== day) return false;
     if (a.time_start && a.time_end) {
-      return timeWindowCovers(a.time_start.slice(0, 5), a.time_end.slice(0, 5), session.start, session.end);
+      return timeWindowCovers(a.time_start.slice(0, 5), a.time_end.slice(0, 5), wStart, wEnd);
     }
-    return a.shift === 'FULL' || a.shift === shift;
+    const key = a.shift as AssignmentShift;
+    if (SHIFT_TIMES[key]) {
+      return timeWindowCovers(SHIFT_TIMES[key].start, SHIFT_TIMES[key].end, wStart, wEnd);
+    }
+    return false;
   });
+}
+
+// Named-shift wrappers used by getStaffCoverageRankings
+function staffCanWorkShift(staff: Staff, day: DayOfWeek, shift: AssignmentShift): boolean {
+  const { start, end } = shiftTimes(shift);
+  return staffCanWorkWindow(staff, day, start, end);
+}
+
+function clientCanAttendShift(client: Client, day: DayOfWeek, shift: AssignmentShift): boolean {
+  const { start, end } = shiftTimes(shift);
+  return clientCanAttendWindow(client, day, start, end);
 }
 
 function staffHasRequiredSkills(staff: Staff, client: Client): boolean {
@@ -64,6 +85,26 @@ function staffHasRequiredSkills(staff: Staff, client: Client): boolean {
 
 function isRestricted(staffId: string, clientId: string, restrictions: StaffClientRestriction[]): boolean {
   return restrictions.some((r) => r.staff_id === staffId && r.client_id === clientId);
+}
+
+function clientPassesSchedulingRules(client: Client, day: DayOfWeek, shift: AssignmentShift): boolean {
+  const rules = client.scheduling_rules ?? [];
+  for (const rule of rules) {
+    if (rule === 'No AM sessions' && shift === 'AM') return false;
+    if (rule === 'No PM sessions' && shift === 'PM') return false;
+    if (rule === 'No After School sessions' && shift === 'EVE') return false;
+    if ((rule === 'No Saturday sessions' || rule === 'Weekdays only') && day === 6) return false;
+    if (rule === 'Morning sessions only' && shift !== 'AM') return false;
+    if (rule === 'Afternoon sessions only' && shift !== 'PM') return false;
+    if (rule === 'Requires male therapist') {
+      // handled at assignment level, not here
+    }
+  }
+  return true;
+}
+
+function clientRequiresMale(client: Client): boolean {
+  return (client.scheduling_rules ?? []).includes('Requires male therapist');
 }
 
 function getStaffHoursInBatch(
@@ -123,65 +164,112 @@ export function generateWeeklySchedule(
   staff: Staff[],
   clients: Client[],
   allRestrictions: StaffClientRestriction[],
-  weekNumber = 1
+  weekNumber = 1,
+  weekStartDate?: string,
+  timeOff: TimeOff[] = [],
+  weekShifts: ShiftDefinition[] = []
 ): Omit<ScheduleAssignment, 'id' | 'created_at'>[] {
   const assignments: Omit<ScheduleAssignment, 'id' | 'created_at'>[] = [];
-  const activeStaff = staff.filter((s) => s.is_active);
-  const activeClients = clients.filter((c) => c.is_active);
+  const activeStaff = staff.filter((s) => {
+    if (!s.is_active) return false;
+    // Don't schedule staff before their start date
+    if (s.start_date && weekStartDate && weekStartDate < s.start_date) return false;
+    return true;
+  });
+  const activeClients = clients.filter((c) => {
+    if (!c.is_active) return false;
+    // Don't schedule clients before their start date
+    if (c.start_date && weekStartDate && weekStartDate < c.start_date) return false;
+    return true;
+  });
+
+  // Build lookup: staffId/clientId → set of date strings they're off
+  function isOnTimeOff(staffId: string | null, clientId: string | null, dateStr: string): boolean {
+    return timeOff.some((t) => {
+      if (staffId && t.staff_id !== staffId) return false;
+      if (clientId && t.client_id !== clientId) return false;
+      if (!staffId && !clientId) return false;
+      return t.date_start <= dateStr && t.date_end >= dateStr;
+    });
+  }
+
+  // Map day-of-week (1=Mon) to ISO date string for the given week
+  function dayToDate(day: DayOfWeek): string {
+    if (!weekStartDate) return '';
+    const d = new Date(weekStartDate + 'T12:00:00');
+    d.setDate(d.getDate() + (day - 1));
+    return d.toISOString().slice(0, 10);
+  }
 
   const bookedSlots = new Map<string, Set<string>>();
 
-  function slotKey(day: DayOfWeek, shift: AssignmentShift) {
-    return `${day}-${shift}`;
+  function slotKey(day: DayOfWeek, shiftName: string) {
+    return `${day}-${shiftName}`;
   }
-  function isBooked(staffId: string, day: DayOfWeek, shift: AssignmentShift) {
-    return bookedSlots.get(slotKey(day, shift))?.has(staffId) ?? false;
+  function isBooked(staffId: string, day: DayOfWeek, shiftName: string) {
+    return bookedSlots.get(slotKey(day, shiftName))?.has(staffId) ?? false;
   }
-  function book(staffId: string, day: DayOfWeek, shift: AssignmentShift) {
-    const key = slotKey(day, shift);
+  function book(staffId: string, day: DayOfWeek, shiftName: string) {
+    const key = slotKey(day, shiftName);
     if (!bookedSlots.has(key)) bookedSlots.set(key, new Set());
     bookedSlots.get(key)!.add(staffId);
   }
 
-  const ALL_SHIFTS: AssignmentShift[] = ['AM', 'PM', 'EVE', 'SAT_AM', 'SAT_PM'];
+  // Use provided DB shifts; fall back to standard shifts if none passed
+  const shiftsToUse: ShiftDefinition[] = weekShifts.length > 0 ? weekShifts : [
+    { id: '', name: 'AM',     label: 'AM',     time_start: '08:00', time_end: '10:30', days: [1,2,3,4,5], color: '', sort_order: 0, is_active: true, created_at: '', date_start: null, date_end: null },
+    { id: '', name: 'PM',     label: 'PM',     time_start: '10:30', time_end: '14:30', days: [1,2,3,4,5], color: '', sort_order: 1, is_active: true, created_at: '', date_start: null, date_end: null },
+    { id: '', name: 'EVE',    label: 'Afternoon', time_start: '15:00', time_end: '18:00', days: [1,2,3,4,5], color: '', sort_order: 2, is_active: true, created_at: '', date_start: null, date_end: null },
+    { id: '', name: 'SAT_AM', label: 'Sat AM', time_start: '09:00', time_end: '12:00', days: [6],     color: '', sort_order: 3, is_active: true, created_at: '', date_start: null, date_end: null },
+    { id: '', name: 'SAT_PM', label: 'Sat PM', time_start: '12:00', time_end: '15:00', days: [6],     color: '', sort_order: 4, is_active: true, created_at: '', date_start: null, date_end: null },
+  ];
 
-  for (const shift of ALL_SHIFTS) {
-    const applicableDays = SHIFT_DAYS[shift];
-    const sessionWindow = shiftTimes(shift);
+  for (const shiftDef of shiftsToUse) {
+    const shiftName = shiftDef.name as AssignmentShift;
+    const applicableDays = shiftDef.days as DayOfWeek[];
+    const sessionWindow = { start: shiftDef.time_start.slice(0, 5), end: shiftDef.time_end.slice(0, 5) };
 
     for (const day of applicableDays) {
-      const clientsForShift = activeClients.filter((c) => clientCanAttendShift(c, day, shift));
+      const dateStr = dayToDate(day);
+
+      const clientsForShift = activeClients.filter((c) => {
+        if (!clientCanAttendWindow(c, day, sessionWindow.start, sessionWindow.end)) return false;
+        if (!clientPassesSchedulingRules(c, day, shiftName)) return false;
+        if (dateStr && isOnTimeOff(null, c.id, dateStr)) return false;
+        return true;
+      });
 
       for (const client of clientsForShift) {
-        // Ramp-up / authorized hours cap — skip session if client is already at their weekly cap
         const rampTarget = getRampUpTarget(client.ramp_up_schedule, weekNumber);
         const authCap = client.authorized_hours_per_week;
         const effectiveCap = rampTarget !== null ? Math.min(rampTarget, authCap ?? Infinity) : authCap;
         if (effectiveCap !== null && effectiveCap !== undefined) {
           const alreadyScheduled = getClientHoursInBatch(client.id, assignments);
           const sessionHours = slotDuration(sessionWindow.start, sessionWindow.end);
-          if (alreadyScheduled + sessionHours > effectiveCap) {
-            // Skip this session — client is at their authorized/ramp-up cap
-            continue;
-          }
+          if (alreadyScheduled + sessionHours > effectiveCap) continue;
         }
 
+        const requiresMale = clientRequiresMale(client);
+
         const eligible = activeStaff.filter((s) => {
-          if (!staffCanWorkShift(s, day, shift)) return false;
-          if (isBooked(s.id, day, shift)) return false;
+          if (!staffCanWorkWindow(s, day, sessionWindow.start, sessionWindow.end)) return false;
+          if (isBooked(s.id, day, shiftName)) return false;
           if (client.no_male_therapists && s.gender === 'male') return false;
+          if (requiresMale && s.gender !== 'male') return false;
           if (isRestricted(s.id, client.id, allRestrictions)) return false;
           if (!staffHasRequiredSkills(s, client)) return false;
+          if (dateStr && isOnTimeOff(s.id, null, dateStr)) return false;
           return true;
         });
 
         if (eligible.length === 0) {
-          // Check if skills are the blocker
           const eligibleIgnoringSkills = activeStaff.filter((s) => {
-            if (!staffCanWorkShift(s, day, shift)) return false;
-            if (isBooked(s.id, day, shift)) return false;
+            if (!staffCanWorkWindow(s, day, sessionWindow.start, sessionWindow.end)) return false;
+            if (isBooked(s.id, day, shiftName)) return false;
             if (client.no_male_therapists && s.gender === 'male') return false;
+            if (requiresMale && s.gender !== 'male') return false;
             if (isRestricted(s.id, client.id, allRestrictions)) return false;
+            if (dateStr && isOnTimeOff(s.id, null, dateStr)) return false;
             return true;
           });
           const skillsMissing = eligibleIgnoringSkills.length > 0 && client.required_skills?.length > 0;
@@ -192,7 +280,7 @@ export function generateWeeklySchedule(
           assignments.push({
             schedule_id: scheduleId,
             day_of_week: day,
-            shift,
+            shift: shiftName,
             time_start: sessionWindow.start,
             time_end: sessionWindow.end,
             staff_id: null,
@@ -212,7 +300,7 @@ export function generateWeeklySchedule(
         });
 
         const chosen = sorted[0];
-        book(chosen.id, day, shift);
+        book(chosen.id, day, shiftName);
 
         const sessionHours = slotDuration(sessionWindow.start, sessionWindow.end);
         const projectedHours = getStaffHoursInBatch(chosen.id, assignments) + sessionHours;
@@ -231,7 +319,7 @@ export function generateWeeklySchedule(
         assignments.push({
           schedule_id: scheduleId,
           day_of_week: day,
-          shift,
+          shift: shiftName,
           time_start: sessionWindow.start,
           time_end: sessionWindow.end,
           staff_id: chosen.id,
@@ -274,24 +362,34 @@ export function calculateStaffHours(
 export function computeRatioAlerts(
   staff: Staff[],
   clients: Client[],
-  allRestrictions: StaffClientRestriction[]
+  allRestrictions: StaffClientRestriction[],
+  weekShifts: ShiftDefinition[] = []
 ): RatioAlert[] {
   const alerts: RatioAlert[] = [];
   const activeStaff = staff.filter((s) => s.is_active);
   const activeClients = clients.filter((c) => c.is_active);
-  const ALL_SHIFTS: AssignmentShift[] = ['AM', 'PM', 'EVE', 'SAT_AM', 'SAT_PM'];
 
-  for (const shift of ALL_SHIFTS) {
-    for (const day of SHIFT_DAYS[shift]) {
-      const clientsForShift = activeClients.filter((c) => clientCanAttendShift(c, day, shift));
+  const shiftsToCheck: ShiftDefinition[] = weekShifts.length > 0 ? weekShifts : [
+    { id: '', name: 'AM',     label: 'AM',     time_start: '08:00', time_end: '10:30', days: [1,2,3,4,5], color: '', sort_order: 0, is_active: true, created_at: '', date_start: null, date_end: null },
+    { id: '', name: 'PM',     label: 'PM',     time_start: '10:30', time_end: '14:30', days: [1,2,3,4,5], color: '', sort_order: 1, is_active: true, created_at: '', date_start: null, date_end: null },
+    { id: '', name: 'EVE',    label: 'Afternoon', time_start: '15:00', time_end: '18:00', days: [1,2,3,4,5], color: '', sort_order: 2, is_active: true, created_at: '', date_start: null, date_end: null },
+    { id: '', name: 'SAT_AM', label: 'Sat AM', time_start: '09:00', time_end: '12:00', days: [6],     color: '', sort_order: 3, is_active: true, created_at: '', date_start: null, date_end: null },
+    { id: '', name: 'SAT_PM', label: 'Sat PM', time_start: '12:00', time_end: '15:00', days: [6],     color: '', sort_order: 4, is_active: true, created_at: '', date_start: null, date_end: null },
+  ];
 
+  for (const shiftDef of shiftsToCheck) {
+    const shiftName = shiftDef.name as AssignmentShift;
+    const wStart = shiftDef.time_start.slice(0, 5);
+    const wEnd = shiftDef.time_end.slice(0, 5);
+
+    for (const day of shiftDef.days as DayOfWeek[]) {
+      const clientsForShift = activeClients.filter((c) => clientCanAttendWindow(c, day, wStart, wEnd));
       if (!clientsForShift.length) continue;
 
-      // Count staff who can work this slot (ignoring double-booking for pre-check)
       const eligibleStaff = new Set<string>();
       for (const client of clientsForShift) {
         for (const s of activeStaff) {
-          if (!staffCanWorkShift(s, day, shift)) continue;
+          if (!staffCanWorkWindow(s, day, wStart, wEnd)) continue;
           if (client.no_male_therapists && s.gender === 'male') continue;
           if (isRestricted(s.id, client.id, allRestrictions)) continue;
           if (!staffHasRequiredSkills(s, client)) continue;
@@ -301,13 +399,7 @@ export function computeRatioAlerts(
 
       const deficit = clientsForShift.length - eligibleStaff.size;
       if (deficit > 0) {
-        alerts.push({
-          day,
-          shift,
-          clientCount: clientsForShift.length,
-          eligibleStaffCount: eligibleStaff.size,
-          deficit,
-        });
+        alerts.push({ day, shift: shiftName, clientCount: clientsForShift.length, eligibleStaffCount: eligibleStaff.size, deficit });
       }
     }
   }
@@ -383,4 +475,111 @@ export function getCancellationRecommendation(
     .join(', ');
 
   return `${affected.length} session(s) need coverage: ${clientNames}. Review eligible staff for those slots.`;
+}
+
+/**
+ * Compute ranked coverage recommendations when a staff member cancels.
+ * Returns top-3 eligible staff who can cover the affected day/shift.
+ */
+export function getStaffCoverageRankings(
+  cancelledStaffId: string,
+  day: DayOfWeek,
+  shifts: AssignmentShift[],
+  affectedClientIds: string[],
+  allStaff: Staff[],
+  clients: Client[],
+  allRestrictions: StaffClientRestriction[],
+  currentAssignments: ScheduleAssignment[]
+): StaffCancellationAnalysis {
+  const activeStaff = allStaff.filter((s) => s.is_active && s.id !== cancelledStaffId);
+
+  // Hours already assigned this week for each staff member
+  function staffHours(staffId: string): number {
+    return currentAssignments.reduce((sum, a) => {
+      if (a.staff_id !== staffId) return sum;
+      if (a.time_start && a.time_end) return sum + slotDuration(a.time_start.slice(0, 5), a.time_end.slice(0, 5));
+      return sum + SHIFT_TIMES[a.shift].hours;
+    }, 0);
+  }
+
+  // A staff member is eligible if they can work ALL affected shifts for ALL affected clients
+  const scored = activeStaff
+    .map((s) => {
+      const warnings: string[] = [];
+
+      // Check availability for at least one of the affected shifts
+      const canWorkAny = shifts.some((sh) => staffCanWorkShift(s, day, sh));
+      if (!canWorkAny) return null;
+
+      // Check for restrictions against any affected client
+      for (const cid of affectedClientIds) {
+        const client = clients.find((c) => c.id === cid);
+        if (!client) continue;
+        if (isRestricted(s.id, cid, allRestrictions)) {
+          warnings.push(`Has restriction with ${client.first_name} ${client.last_name}`);
+        }
+        if (client.no_male_therapists && s.gender === 'male') {
+          warnings.push(`Client requires female therapist`);
+        }
+        if (!staffHasRequiredSkills(s, client)) {
+          const missing = (client.required_skills ?? []).filter((sk) => !(s.skills ?? []).includes(sk));
+          warnings.push(`Missing skills: ${missing.join(', ')}`);
+        }
+      }
+
+      const hours = staffHours(s.id);
+      return { s, hours, warnings };
+    })
+    .filter(Boolean) as { s: Staff; hours: number; warnings: string[] }[];
+
+  // Sort: fewer warnings first, then by priority tier, then by hours under goal
+  scored.sort((a, b) => {
+    const wDiff = a.warnings.length - b.warnings.length;
+    if (wDiff !== 0) return wDiff;
+    if (a.s.priority_tier !== b.s.priority_tier) return a.s.priority_tier - b.s.priority_tier;
+    const aUnder = a.s.weekly_hour_goal - a.hours;
+    const bUnder = b.s.weekly_hour_goal - b.hours;
+    return bUnder - aUnder; // prefer most under-hours
+  });
+
+  const top3 = scored.slice(0, 3);
+  const affectedClients = affectedClientIds
+    .map((cid) => {
+      const c = clients.find((x) => x.id === cid);
+      return c ? `${c.first_name} ${c.last_name}` : cid;
+    });
+
+  const cancelledName = allStaff.find((s) => s.id === cancelledStaffId)?.name ?? 'Unknown';
+
+  return {
+    type: 'staff_coverage',
+    cancelledStaff: cancelledName,
+    affectedClients,
+    recommendations: top3.map((item, i) => ({
+      rank: (i + 1) as 1 | 2 | 3,
+      staffId: item.s.id,
+      staffName: item.s.name,
+      tier: item.s.priority_tier,
+      currentHours: item.hours,
+      weeklyGoal: item.s.weekly_hour_goal,
+      warnings: item.warnings,
+    })),
+  };
+}
+
+/**
+ * Check if a client assignment is still valid given a new set of availability windows.
+ * Returns true if the client can still attend that slot.
+ */
+export function clientCanStillAttend(
+  dayOfWeek: DayOfWeek,
+  shift: AssignmentShift,
+  availWindows: Array<{ day_of_week: number; time_start: string | null; time_end: string | null }>
+): boolean {
+  const shiftWindow = SHIFT_TIMES[shift];
+  return availWindows.some((a) => {
+    if (a.day_of_week !== dayOfWeek) return false;
+    if (!a.time_start || !a.time_end) return false;
+    return timeWindowCovers(a.time_start.slice(0, 5), a.time_end.slice(0, 5), shiftWindow.start, shiftWindow.end);
+  });
 }

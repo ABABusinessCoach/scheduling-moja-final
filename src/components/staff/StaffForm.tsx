@@ -21,6 +21,7 @@ import {
   formatTime,
 } from '../../lib/types';
 import { X, Plus, ShieldAlert } from 'lucide-react';
+import { TimeOffManager } from '../shared/TimeOffManager';
 
 interface StaffFormProps {
   staff?: Staff | null;
@@ -44,7 +45,7 @@ function shiftFromWindow(start: string, end: string, day: DayOfWeek): Availabili
     return 'SAT_AM';
   }
   if (start >= '15:00') return 'EVE';
-  if (start === '08:00' && end === '14:30') return 'FULL';
+  if (start === '08:00' && end === '18:00') return 'FULL';
   if (end <= '10:30') return 'AM';
   return 'PM';
 }
@@ -53,9 +54,9 @@ function shiftBadge(start: string, end: string, day: DayOfWeek) {
   if (!start || !end) return null;
   if (day === 6) return { label: 'Saturday', color: 'bg-purple-100 text-purple-700' };
   if (start >= '15:00') return { label: 'After School', color: 'bg-teal-100 text-teal-700' };
-  if (start === '08:00' && end === '14:30') return { label: 'Full Day', color: 'bg-aqua-100 text-aqua-700' };
+  if (start === '08:00' && end === '18:00') return { label: 'Full Day', color: 'bg-aqua-100 text-aqua-700' };
   if (end <= '10:30') return { label: 'AM', color: 'bg-amber-100 text-amber-700' };
-  if (start >= '10:30') return { label: 'PM', color: 'bg-blue-100 text-blue-700' };
+  if (start >= '10:30') return { label: 'Late AM', color: 'bg-blue-100 text-blue-700' };
   return { label: 'Custom', color: 'bg-slate-100 text-slate-600' };
 }
 
@@ -63,12 +64,14 @@ export function StaffForm({ staff, onSave, onCancel }: StaffFormProps) {
   const isEdit = !!staff;
 
   const [name, setName] = useState(staff?.name ?? '');
+  const [email, setEmail] = useState(staff?.email ?? '');
   const [employment, setEmployment] = useState<EmploymentType>(staff?.employment_type ?? 'full-time');
   const [goalHours, setGoalHours] = useState(staff?.weekly_hour_goal?.toString() ?? '30');
   const [tier, setTier] = useState<PriorityTier>(staff?.priority_tier ?? 1);
   const [gender, setGender] = useState<Gender>(staff?.gender ?? 'female');
   const [isActive, setIsActive] = useState(staff?.is_active ?? true);
   const [notes, setNotes] = useState(staff?.notes ?? '');
+  const [startDate, setStartDate] = useState(staff?.start_date ?? '');
   const [skills, setSkills] = useState<string[]>(staff?.skills ?? []);
   const [schedulingRules, setSchedulingRules] = useState<string[]>(staff?.scheduling_rules ?? []);
   const [newRuleText, setNewRuleText] = useState('');
@@ -190,6 +193,7 @@ export function StaffForm({ staff, onSave, onCancel }: StaffFormProps) {
       let staffId: string;
       const payload = {
         name: trimmedName,
+        email: email.trim() || null,
         employment_type: employment,
         weekly_hour_goal: parsedGoal,
         priority_tier: tier,
@@ -200,6 +204,7 @@ export function StaffForm({ staff, onSave, onCancel }: StaffFormProps) {
         scheduling_rules: schedulingRules,
         supervision_hours_required: parsedSupReq,
         supervision_hours_this_week: parsedSupWeek,
+        start_date: startDate || null,
       };
 
       if (isEdit && staff) {
@@ -264,9 +269,13 @@ export function StaffForm({ staff, onSave, onCancel }: StaffFormProps) {
 
           {/* ── Basic Info ── */}
           <div className="grid grid-cols-2 gap-4">
-            <div className="col-span-2">
+            <div>
               <label className="form-label">Full Name</label>
               <input className="form-input" value={name} onChange={(e) => setName(e.target.value)} required placeholder="e.g. Rebecca" />
+            </div>
+            <div>
+              <label className="form-label">Email Address</label>
+              <input className="form-input" type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="e.g. rebecca@clinic.com" />
             </div>
             <div>
               <label className="form-label">Employment Type</label>
@@ -294,6 +303,16 @@ export function StaffForm({ staff, onSave, onCancel }: StaffFormProps) {
                 <option value="active">Active</option>
                 <option value="inactive">Inactive</option>
               </select>
+            </div>
+            <div>
+              <label className="form-label">Schedule Start Date <span className="text-slate-400 font-normal">(optional)</span></label>
+              <input
+                type="date"
+                className="form-input"
+                value={startDate}
+                onChange={(e) => setStartDate(e.target.value)}
+              />
+              <p className="text-xs text-slate-400 mt-1">Scheduler will not place this staff before this date.</p>
             </div>
           </div>
 
@@ -340,7 +359,7 @@ export function StaffForm({ staff, onSave, onCancel }: StaffFormProps) {
                     onClick={() => applyPreset(p)}
                     className="px-2 py-1 rounded-lg text-xs font-medium bg-slate-100 hover:bg-slate-200 text-slate-600 transition-colors whitespace-nowrap"
                   >
-                    {p === 'FULL' ? 'Full Day' : p === 'EVE' ? 'After School' : p}
+                    {p === 'FULL' ? 'Full Day' : p === 'EVE' ? 'After School' : p === 'PM' ? 'Late AM' : p}
                   </button>
                 ))}
                 <button
@@ -357,8 +376,8 @@ export function StaffForm({ staff, onSave, onCancel }: StaffFormProps) {
             <div className="grid grid-cols-4 gap-2 mb-3">
               {[
                 { label: 'AM', time: '8:00 – 10:30', color: 'border-amber-200 bg-amber-50 text-amber-700' },
-                { label: 'PM', time: '10:30 – 2:30', color: 'border-blue-200 bg-blue-50 text-blue-700' },
-                { label: 'Full Day', time: '8:00 – 2:30', color: 'border-aqua-200 bg-aqua-50 text-aqua-700' },
+                { label: 'Late AM', time: '10:30 – 2:30', color: 'border-blue-200 bg-blue-50 text-blue-700' },
+                { label: 'Full Day', time: '8:00 – 6:00', color: 'border-aqua-200 bg-aqua-50 text-aqua-700' },
                 { label: 'After School', time: '3:00 – 6:00', color: 'border-teal-200 bg-teal-50 text-teal-700' },
               ].map((s) => (
                 <div key={s.label} className={`px-2 py-1.5 rounded-lg border text-center ${s.color}`}>
@@ -386,10 +405,6 @@ export function StaffForm({ staff, onSave, onCancel }: StaffFormProps) {
                 const validEnd = ALL_END_TIMES.filter((t) => t > w.start);
                 const badge = w.enabled ? shiftBadge(w.start, w.end, day) : null;
 
-                // Warn if window spans the clinic-closed gap (14:30–15:00)
-                const spansGap = w.enabled && w.start < '14:30' && w.end > '14:30' && w.end <= '15:00';
-                const crossesGap = w.enabled && w.start < '14:30' && w.end > '15:00';
-
                 return (
                   <div
                     key={day}
@@ -414,13 +429,13 @@ export function StaffForm({ staff, onSave, onCancel }: StaffFormProps) {
                         value={w.start}
                         onChange={(e) => {
                           const newStart = e.target.value;
-                          const newEnd = newStart >= w.end ? TIME_SLOTS.find((t) => t > newStart) ?? '14:30' : w.end;
+                          const newEnd = newStart >= w.end ? TIME_SLOTS.find((t) => t > newStart) ?? '16:00' : w.end;
                           updateWindow(day, { start: newStart, end: newEnd });
                         }}
                         className="form-input py-1.5 text-xs disabled:bg-transparent disabled:border-transparent disabled:text-slate-300 disabled:cursor-not-allowed"
                       >
-                        {TIME_SLOTS.filter((t) => t !== '14:30' || day === 6).map((t) => (
-                          <option key={t} value={t} disabled={t === '14:30' && day !== 6}>{formatTime(t)}</option>
+                        {TIME_SLOTS.map((t) => (
+                          <option key={t} value={t}>{formatTime(t)}</option>
                         ))}
                       </select>
                     </div>
@@ -433,13 +448,8 @@ export function StaffForm({ staff, onSave, onCancel }: StaffFormProps) {
                         className="form-input py-1.5 text-xs disabled:bg-transparent disabled:border-transparent disabled:text-slate-300 disabled:cursor-not-allowed"
                       >
                         {validEnd.map((t) => (
-                          <option
-                            key={t}
-                            value={t}
-                            disabled={day !== 6 && t > '14:30' && t < '15:00'}
-                          >
-                            {formatTime(t)}{day !== 6 && t === '14:30' ? ' (end of day)' : ''}
-                            {t === '18:00' ? ' (end of after school)' : ''}
+                          <option key={t} value={t}>
+                            {formatTime(t)}{t === '18:00' ? ' (end of after school)' : ''}
                           </option>
                         ))}
                       </select>
@@ -456,15 +466,6 @@ export function StaffForm({ staff, onSave, onCancel }: StaffFormProps) {
                   </div>
                 );
               })}
-            </div>
-
-            {/* Clinic closed notice */}
-            <div className="mt-2 flex items-start gap-2 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2">
-              <span className="text-rose-500 mt-0.5 flex-shrink-0">⚠</span>
-              <p className="text-xs text-rose-700">
-                <strong>Clinic closed 2:30 – 3:00 PM.</strong> No sessions can be scheduled in this window.
-                Availability windows that end at 2:30 or start at 3:00 are valid — do not set end time to values between 2:30 and 3:00.
-              </p>
             </div>
           </div>
 
@@ -599,6 +600,13 @@ export function StaffForm({ staff, onSave, onCancel }: StaffFormProps) {
                   );
                 })}
               </div>
+            </div>
+          )}
+
+          {/* ── Time Off ── */}
+          {isEdit && staff && (
+            <div className="border border-slate-200 rounded-xl p-4">
+              <TimeOffManager staffId={staff.id} />
             </div>
           )}
 

@@ -8,13 +8,12 @@ import { format, addDays, getMonday } from '../lib/dateUtils';
 import { WeeklyGrid } from '../components/schedule/WeeklyGrid';
 import { StaffView } from '../components/schedule/StaffView';
 import { ClientView } from '../components/schedule/ClientView';
-import { HourTracker } from '../components/schedule/HourTracker';
 import { TimelineGrid } from '../components/schedule/TimelineGrid';
 import { DailyView } from '../components/schedule/DailyView';
 import { SupervisionTracker } from '../components/schedule/SupervisionTracker';
-import { ClientHourTracker } from '../components/schedule/ClientHourTracker';
 import { ShiftManager } from '../components/schedule/ShiftManager';
 import { GapFillerModal } from '../components/schedule/GapFillerModal';
+import { SendScheduleModal } from '../components/schedule/SendScheduleModal';
 import { useToast } from '../lib/toast';
 import {
   ChevronLeft,
@@ -30,9 +29,12 @@ import {
   FileText,
   X,
   Settings2,
+  Hammer,
+  RotateCcw,
+  Send,
 } from 'lucide-react';
 
-type ViewMode = 'timeline' | 'daily' | 'grid' | 'staff' | 'client';
+type ViewMode = 'timeline' | 'daily' | 'grid' | 'staff' | 'client' | 'builder';
 
 export function SchedulePage() {
   const {
@@ -47,7 +49,9 @@ export function SchedulePage() {
     sessionNotes,
     ratioAlerts,
     shifts,
+    shiftsForWeek,
     breakTimes,
+    timeOffForWeek,
     loading,
     refreshSchedule,
     refreshShiftsAndBreaks,
@@ -65,6 +69,8 @@ export function SchedulePage() {
   const [alertsDismissed, setAlertsDismissed] = useState(false);
   const [gapAlert, setGapAlert] = useState<RatioAlert | null>(null);
   const [showShiftManager, setShowShiftManager] = useState(false);
+  const [startingOver, setStartingOver] = useState(false);
+  const [showSendModal, setShowSendModal] = useState(false);
   const showToast = useToast();
 
   async function generateSchedule() {
@@ -103,7 +109,16 @@ export function SchedulePage() {
         scheduleId = newSched.id;
       }
 
-      const generated = generateWeeklySchedule(scheduleId, staff, clients, allRestrictions);
+      const generated = generateWeeklySchedule(
+        scheduleId,
+        staff,
+        clients,
+        allRestrictions,
+        1,
+        weekStr,
+        timeOffForWeek,
+        shiftsForWeek
+      );
       if (generated.length > 0) {
         await supabase.from('schedule_assignments').insert(generated);
       }
@@ -127,6 +142,24 @@ export function SchedulePage() {
     }
   }
 
+  async function startOver() {
+    if (!schedule) return;
+    const ok = window.confirm('This will delete all current assignments and reset the schedule to a blank draft. Continue?');
+    if (!ok) return;
+    setStartingOver(true);
+    try {
+      await supabase.from('schedule_assignments').delete().eq('schedule_id', schedule.id);
+      await supabase.from('schedules').update({ status: 'draft' }).eq('id', schedule.id);
+      await refreshSchedule();
+      setViewMode('builder');
+      showToast('Schedule cleared. Add assignments manually using the Builder.');
+    } catch {
+      showToast('Failed to clear schedule.', 'error');
+    } finally {
+      setStartingOver(false);
+    }
+  }
+
   const violationCount = assignments.filter((a) => a.violation_reason).length;
   const unassignedCount = assignments.filter((a) => !a.staff_id).length;
   const missingNotesCount = assignments.filter((a) => {
@@ -140,6 +173,7 @@ export function SchedulePage() {
     { id: 'grid',     icon: <CalendarDays size={14} />, label: 'Grid' },
     { id: 'staff',    icon: <Users size={14} />, label: 'By Staff' },
     { id: 'client',   icon: <UserRound size={14} />, label: 'By Client' },
+    { id: 'builder',  icon: <Hammer size={14} />, label: 'Builder' },
   ];
 
   const sharedProps = {
@@ -210,13 +244,30 @@ export function SchedulePage() {
                 <CheckCircle2 size={15} /> Publish
               </button>
             )}
+            {schedule && (
+              <button
+                onClick={() => setShowSendModal(true)}
+                className="flex items-center gap-1.5 px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-xl text-sm font-semibold transition-colors"
+              >
+                <Send size={15} /> Send
+              </button>
+            )}
+            {schedule && (
+              <button
+                onClick={startOver}
+                disabled={startingOver}
+                className="flex items-center gap-1.5 px-3 py-2 bg-slate-100 hover:bg-red-50 text-slate-500 hover:text-red-600 rounded-xl text-sm font-semibold transition-colors disabled:opacity-60"
+              >
+                <RotateCcw size={15} /> Start Over
+              </button>
+            )}
             <button
               onClick={generateSchedule}
               disabled={generating}
               className="flex items-center gap-1.5 px-4 py-2 bg-accent-500 hover:bg-accent-600 text-white rounded-xl text-sm font-semibold transition-colors disabled:opacity-60"
             >
               <Wand2 size={15} />
-              {generating ? 'Generating…' : schedule ? 'Regenerate' : 'Auto-Generate'}
+              {generating ? 'Generating…' : schedule ? 'Regenerate' : 'Smart Schedule'}
             </button>
           </div>
         </div>
@@ -280,13 +331,13 @@ export function SchedulePage() {
               disabled={generating}
               className="flex items-center gap-2 px-5 py-2.5 bg-accent-500 hover:bg-accent-600 text-white rounded-xl text-sm font-semibold disabled:opacity-60"
             >
-              <Wand2 size={16} /> {generating ? 'Generating…' : 'Auto-Generate Schedule'}
+              <Wand2 size={16} /> {generating ? 'Generating…' : 'Smart Schedule'}
             </button>
           </div>
         ) : viewMode === 'timeline' ? (
           <TimelineGrid
             {...sharedProps}
-            shifts={shifts}
+            shifts={shiftsForWeek}
             breakTimes={breakTimes}
           />
         ) : viewMode === 'daily' ? (
@@ -296,7 +347,7 @@ export function SchedulePage() {
             assignments={assignments}
             staff={staff}
             clients={clients}
-            shifts={shifts}
+            shifts={shiftsForWeek}
             onUpdateAssignment={handleUpdateAssignment}
             onMoveAssignment={handleMoveAssignment}
             onDeleteAssignment={handleDeleteAssignment}
@@ -305,6 +356,19 @@ export function SchedulePage() {
           />
         ) : viewMode === 'staff' ? (
           <StaffView staff={staff} assignments={assignments} />
+        ) : viewMode === 'builder' ? (
+          <ManualBuilderView
+            assignments={assignments}
+            staff={staff}
+            clients={clients}
+            shifts={shiftsForWeek}
+            breakTimes={breakTimes}
+            timeOff={timeOffForWeek}
+            currentMonday={currentMonday}
+            onInsert={handleInsertAssignment}
+            onDelete={handleDeleteAssignment}
+            onUpdateStaff={handleUpdateAssignment}
+          />
         ) : (
           <ClientView clients={clients} assignments={assignments} />
         )}
@@ -312,9 +376,7 @@ export function SchedulePage() {
 
       {/* Sidebar */}
       <div className="w-56 flex-shrink-0 space-y-4">
-        <HourTracker staff={staff} assignments={assignments} />
         <SupervisionTracker staff={staff} />
-        <ClientHourTracker clients={clients} assignments={assignments} />
 
         {schedule && (
           <div className="bg-white rounded-xl border border-slate-200 p-4 space-y-3">
@@ -346,7 +408,7 @@ export function SchedulePage() {
           </div>
         )}
 
-        {shifts.filter((s) => s.is_active).length > 0 && (
+        {shiftsForWeek.length > 0 && (
           <div className="bg-white rounded-xl border border-slate-200 p-4">
             <div className="flex items-center justify-between mb-3">
               <h3 className="text-sm font-semibold text-slate-700">Active Shifts</h3>
@@ -358,7 +420,7 @@ export function SchedulePage() {
               </button>
             </div>
             <div className="space-y-2 text-xs">
-              {shifts.filter((s) => s.is_active).map((s) => (
+              {shiftsForWeek.map((s) => (
                 <div key={s.id} className="flex items-center gap-2">
                   <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: s.color }} />
                   <span className="text-slate-600 truncate">{s.label}</span>
@@ -390,6 +452,15 @@ export function SchedulePage() {
           onAssign={handleUpdateAssignment}
           onInsert={handleInsertAssignment}
           onClose={() => setGapAlert(null)}
+        />
+      )}
+
+      {showSendModal && (
+        <SendScheduleModal
+          weekLabel={weekLabel}
+          weekStart={format(currentMonday, 'yyyy-MM-dd')}
+          staff={staff}
+          onClose={() => setShowSendModal(false)}
         />
       )}
     </div>
