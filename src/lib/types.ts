@@ -7,7 +7,7 @@ export type AvailabilityShift = 'AM' | 'PM' | 'FULL' | 'EVE' | 'SAT_AM' | 'SAT_P
 export type ScheduleStatus = 'draft' | 'published';
 export type CancellationType = 'client' | 'staff';
 export type DayOfWeek = 1 | 2 | 3 | 4 | 5 | 6; // 1=Mon, 5=Fri, 6=Sat
-export type AssignmentShift = 'AM' | 'PM' | 'EVE' | 'SAT_AM' | 'SAT_PM' | 'SUM_HALF' | 'SUM_FULL';
+export type AssignmentShift = 'AM' | 'PM' | 'EVE' | 'SAT_AM' | 'SAT_PM' | 'SUM_HALF' | 'SUM_FULL' | 'AM_SESSION' | 'LATE_AM' | 'SUMMER_HALF_DAY_PM' | string;
 
 export const DAY_NAMES: Record<DayOfWeek, string> = {
   1: 'Monday',
@@ -73,14 +73,17 @@ export const AVAILABILITY_PRESETS: Record<AvailabilityShift, { start: string; en
 };
 
 /** Human-readable labels for AssignmentShift values — use time ranges instead of names */
-export const SHIFT_LABELS: Record<AssignmentShift, string> = {
-  AM:       '8:00–10:30',
-  PM:       '10:30–2:30',
-  EVE:      '3:00–6:00 PM',
-  SAT_AM:   'Sat 9:00–12:00',
-  SAT_PM:   'Sat 12:00–3:00',
-  SUM_HALF: 'Summer 8:00–12:00',
-  SUM_FULL: 'Summer 8:00–4:00',
+export const SHIFT_LABELS: Record<string, string> = {
+  AM:                 '8:00–10:30',
+  PM:                 '10:30–2:30',
+  EVE:                '3:00–6:00 PM',
+  SAT_AM:             'Sat 9:00–12:00',
+  SAT_PM:             'Sat 12:00–3:00',
+  SUM_HALF:           'Summer 8:00–12:00',
+  SUM_FULL:           'Summer 8:00–4:00',
+  AM_SESSION:         '8:00–12:00',
+  LATE_AM:            '12:00–2:30',
+  SUMMER_HALF_DAY_PM: 'Summer 12:00–3:30',
 };
 
 /** Priority tier labels for scheduling */
@@ -117,24 +120,30 @@ export const CLIENT_RULE_PRESETS = [
   'No floating staff',
 ] as const;
 
-export const SHIFT_TIMES: Record<AssignmentShift, { start: string; end: string; hours: number }> = {
-  AM:       { start: '08:00', end: '10:30', hours: 2.5 },
-  PM:       { start: '10:30', end: '14:30', hours: 4.0 },
-  EVE:      { start: '15:00', end: '18:00', hours: 3.0 },
-  SAT_AM:   { start: '09:00', end: '12:00', hours: 3.0 },
-  SAT_PM:   { start: '12:00', end: '15:00', hours: 3.0 },
-  SUM_HALF: { start: '08:00', end: '12:00', hours: 4.0 },
-  SUM_FULL: { start: '08:00', end: '16:00', hours: 8.0 },
+export const SHIFT_TIMES: Record<string, { start: string; end: string; hours: number }> = {
+  AM:                 { start: '08:00', end: '10:30', hours: 2.5 },
+  PM:                 { start: '10:30', end: '14:30', hours: 4.0 },
+  EVE:                { start: '15:00', end: '18:00', hours: 3.0 },
+  SAT_AM:             { start: '09:00', end: '12:00', hours: 3.0 },
+  SAT_PM:             { start: '12:00', end: '15:00', hours: 3.0 },
+  SUM_HALF:           { start: '08:00', end: '12:00', hours: 4.0 },
+  SUM_FULL:           { start: '08:00', end: '16:00', hours: 8.0 },
+  AM_SESSION:         { start: '08:00', end: '12:00', hours: 4.0 },
+  LATE_AM:            { start: '12:00', end: '14:30', hours: 2.5 },
+  SUMMER_HALF_DAY_PM: { start: '12:00', end: '15:30', hours: 3.5 },
 };
 
-export const SHIFT_DAYS: Record<AssignmentShift, DayOfWeek[]> = {
-  AM:       [1, 2, 3, 4, 5],
-  PM:       [1, 2, 3, 4, 5],
-  EVE:      [1, 2, 3, 4, 5],
-  SAT_AM:   [6],
-  SAT_PM:   [6],
-  SUM_HALF: [1, 2, 3, 4, 5],
-  SUM_FULL: [1, 2, 3, 4, 5],
+export const SHIFT_DAYS: Record<string, DayOfWeek[]> = {
+  AM:                 [1, 2, 3, 4, 5],
+  PM:                 [1, 2, 3, 4, 5],
+  EVE:                [1, 2, 3, 4, 5],
+  SAT_AM:             [6],
+  SAT_PM:             [6],
+  SUM_HALF:           [1, 2, 3, 4, 5],
+  SUM_FULL:           [1, 2, 3, 4, 5],
+  AM_SESSION:         [1, 2, 3, 4, 5],
+  LATE_AM:            [1, 2, 3, 4, 5],
+  SUMMER_HALF_DAY_PM: [1, 2, 3, 4, 5],
 };
 
 export function slotDuration(start: string, end: string): number {
@@ -372,5 +381,13 @@ export interface TimeOff {
   date_start: string;
   date_end: string;
   reason: string;
+  created_at: string;
+}
+
+export interface ClinicClosure {
+  id: string;
+  date: string;
+  name: string;
+  notes: string;
   created_at: string;
 }

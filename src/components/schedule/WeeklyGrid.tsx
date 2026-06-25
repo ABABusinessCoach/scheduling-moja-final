@@ -65,7 +65,9 @@ export function WeeklyGrid({
     return () => document.removeEventListener('mousedown', handleClick);
   }, [editingCell]);
 
-  const activeShifts = shifts.filter((s) => s.is_active);
+  const activeShifts = shifts
+    .filter((s) => s.is_active)
+    .sort((a, b) => a.time_start.localeCompare(b.time_start));
 
   // Unique days across active shifts, sorted
   const activeDays = React.useMemo(() => {

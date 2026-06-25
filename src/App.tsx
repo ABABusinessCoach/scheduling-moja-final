@@ -6,6 +6,7 @@ import { LoginPage } from './pages/LoginPage';
 import { DashboardPage } from './pages/DashboardPage';
 import { SchedulePage } from './pages/SchedulePage';
 import { CancellationPage } from './pages/CancellationPage';
+import { ClinicCalendarPage } from './pages/ClinicCalendarPage';
 import { StaffList } from './components/staff/StaffList';
 import { ClientList } from './components/clients/ClientList';
 import { Sidebar } from './components/layout/Sidebar';
@@ -34,6 +35,7 @@ function AppLayout() {
       case 'staff': return <StaffList />;
       case 'clients': return <ClientList />;
       case 'cancellations': return <CancellationPage />;
+      case 'clinic-calendar': return <ClinicCalendarPage />;
       default: return <DashboardPage onNavigate={setCurrentPage} />;
     }
   }

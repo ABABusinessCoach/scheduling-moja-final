@@ -14,6 +14,7 @@ import { SupervisionTracker } from '../components/schedule/SupervisionTracker';
 import { ShiftManager } from '../components/schedule/ShiftManager';
 import { GapFillerModal } from '../components/schedule/GapFillerModal';
 import { SendScheduleModal } from '../components/schedule/SendScheduleModal';
+import { ManualBuilderView } from '../components/schedule/ManualBuilderView';
 import { useToast } from '../lib/toast';
 import {
   ChevronLeft,
@@ -120,7 +121,8 @@ export function SchedulePage() {
         shiftsForWeek
       );
       if (generated.length > 0) {
-        await supabase.from('schedule_assignments').insert(generated);
+        const { error: insertError } = await supabase.from('schedule_assignments').insert(generated);
+        if (insertError) throw new Error(insertError.message);
       }
       await refreshSchedule();
       showToast('Schedule generated.');
@@ -341,7 +343,7 @@ export function SchedulePage() {
             breakTimes={breakTimes}
           />
         ) : viewMode === 'daily' ? (
-          <DailyView {...sharedProps} breakTimes={breakTimes} day={selectedDay} onDayChange={setSelectedDay} />
+          <DailyView {...sharedProps} shifts={shiftsForWeek} breakTimes={breakTimes} day={selectedDay} onDayChange={setSelectedDay} />
         ) : viewMode === 'grid' ? (
           <WeeklyGrid
             assignments={assignments}
@@ -355,7 +357,7 @@ export function SchedulePage() {
             weekLabel={weekLabel}
           />
         ) : viewMode === 'staff' ? (
-          <StaffView staff={staff} assignments={assignments} />
+          <StaffView staff={staff} assignments={assignments} shifts={shiftsForWeek} />
         ) : viewMode === 'builder' ? (
           <ManualBuilderView
             assignments={assignments}
@@ -370,7 +372,7 @@ export function SchedulePage() {
             onUpdateStaff={handleUpdateAssignment}
           />
         ) : (
-          <ClientView clients={clients} assignments={assignments} />
+          <ClientView clients={clients} assignments={assignments} shifts={shiftsForWeek} />
         )}
       </div>
 

@@ -86,7 +86,7 @@ export function ScheduleProvider({ children }: { children: React.ReactNode }) {
         .eq('is_active', true)
         .order('first_name'),
       supabase.from('staff_client_restrictions').select('*'),
-      supabase.from('shifts').select('*').order('sort_order'),
+      supabase.from('shifts').select('*').order('time_start').order('sort_order'),
       supabase.from('break_times').select('*').order('sort_order'),
     ]);
     setStaff(
@@ -147,7 +147,7 @@ export function ScheduleProvider({ children }: { children: React.ReactNode }) {
 
   async function refreshShiftsAndBreaks() {
     const [shiftsRes, breaksRes] = await Promise.all([
-      supabase.from('shifts').select('*').order('sort_order'),
+      supabase.from('shifts').select('*').order('time_start').order('sort_order'),
       supabase.from('break_times').select('*').order('sort_order'),
     ]);
     setShifts(shiftsRes.data ?? []);
@@ -288,7 +288,7 @@ export function ScheduleProvider({ children }: { children: React.ReactNode }) {
             // Exclude non-seasonal shift if all its days are covered by seasonal shifts
             if (seasonalDays.size > 0 && s.days.every((d) => seasonalDays.has(d))) return false;
             return true;
-          });
+          }).sort((a, b) => a.time_start.localeCompare(b.time_start));
         })(),
         breakTimes,
         timeOffForWeek,

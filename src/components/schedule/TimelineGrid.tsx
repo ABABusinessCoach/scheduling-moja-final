@@ -110,14 +110,12 @@ export function TimelineGrid({
   const activeShifts = shifts.filter((s) => s.is_active);
   const activeBreaks = breakTimes.filter((b) => b.is_active);
 
-  // Derive unique days from active shifts
   const activeDays = React.useMemo(() => {
     const daySet = new Set<DayOfWeek>();
     activeShifts.forEach((s) => s.days.forEach((d) => daySet.add(d as DayOfWeek)));
     return ([1, 2, 3, 4, 5, 6] as DayOfWeek[]).filter((d) => daySet.has(d));
   }, [activeShifts]);
 
-  // Visible time range from active shifts
   const timeRange = React.useMemo(() => {
     if (!activeShifts.length) return { start: '08:00', end: '14:30' };
     const starts = activeShifts.map((s) => s.time_start.slice(0, 5)).sort();
@@ -126,6 +124,17 @@ export function TimelineGrid({
   }, [activeShifts]);
 
   const visibleSlots = TIME_SLOTS.filter((t) => t >= timeRange.start && t < timeRange.end);
+
+  // Returns true if a 30-min slot is covered by an active shift on this day
+  function shiftCoversSlot(day: DayOfWeek, slotStart: string): boolean {
+    const slotEnd = addThirtyMin(slotStart);
+    return activeShifts.some(
+      (s) =>
+        s.days.includes(day) &&
+        s.time_start.slice(0, 5) <= slotStart &&
+        s.time_end.slice(0, 5) >= slotEnd
+    );
+  }
 
   function isBreakSlot(slotStart: string, day: DayOfWeek): string | null {
     const slotEnd = addThirtyMin(slotStart);
@@ -147,14 +156,12 @@ export function TimelineGrid({
     });
   }
 
-  // Drag assignment
   function handleDragStart(e: React.DragEvent, assignmentId: string) {
     setDraggingId(assignmentId);
     e.dataTransfer.effectAllowed = 'move';
     e.dataTransfer.setData('application/x-assignment-id', assignmentId);
   }
 
-  // Drag staff chip
   function handleStaffDragStart(e: React.DragEvent, staffId: string) {
     setDraggingStaffId(staffId);
     e.dataTransfer.effectAllowed = 'copy';
@@ -210,6 +217,7 @@ export function TimelineGrid({
   }
 
   const activeStaff = staff.filter((s) => s.is_active);
+  const colTemplate = `80px repeat(${activeDays.length}, 1fr)`;
 
   return (
     <div ref={containerRef}>
@@ -249,12 +257,17 @@ export function TimelineGrid({
         )}
       </div>
 
-      <div className="overflow-x-auto">
+      {/* Scrollable grid — header is sticky inside this container */}
+      <div
+        className="overflow-auto rounded-xl border border-slate-200"
+        style={{ maxHeight: 'calc(100vh - 270px)' }}
+      >
         <div style={{ minWidth: `${100 + activeDays.length * 160}px` }}>
-          {/* Header */}
+
+          {/* Sticky day-of-week header */}
           <div
-            className="grid bg-slate-800 text-white text-xs font-semibold rounded-t-xl"
-            style={{ gridTemplateColumns: `80px repeat(${activeDays.length}, 1fr)` }}
+            className="sticky top-0 z-10 grid bg-slate-800 text-white text-xs font-semibold"
+            style={{ gridTemplateColumns: colTemplate }}
           >
             <div className="px-3 py-3 text-slate-400 uppercase tracking-wide">Time</div>
             {activeDays.map((d) => (
@@ -264,18 +277,20 @@ export function TimelineGrid({
             ))}
           </div>
 
-          {/* Rows */}
+          {/* Time rows */}
           {visibleSlots.map((slotStart, idx) => {
             const isLastSlot = idx === visibleSlots.length - 1;
-            // Check if this slot is a break for any column (use day 1 as reference for generic breaks)
             const genericBreak = isBreakSlot(slotStart, 1 as DayOfWeek);
 
             return (
               <div
                 key={slotStart}
-                className={`grid border-b ${isLastSlot ? 'border-slate-200 rounded-b-xl' : 'border-slate-100'} ${genericBreak ? 'bg-rose-50 border-rose-200' : 'bg-white hover:bg-slate-50/40'}`}
-                style={{ gridTemplateColumns: `80px repeat(${activeDays.length}, 1fr)` }}
+                className={`grid border-b ${isLastSlot ? 'border-slate-200' : 'border-slate-100'} ${
+                  genericBreak ? 'bg-rose-50 border-rose-200' : 'bg-white'
+                }`}
+                style={{ gridTemplateColumns: colTemplate }}
               >
+                {/* Time label */}
                 <div className={`px-3 py-2 flex flex-col justify-center border-r ${genericBreak ? 'border-rose-200' : 'border-slate-100'}`}>
                   <span className={`text-xs font-semibold ${genericBreak ? 'text-rose-600' : 'text-slate-600'}`}>
                     {formatTime(slotStart)}
@@ -287,11 +302,26 @@ export function TimelineGrid({
 
                 {activeDays.map((day) => {
                   const breakLabel = isBreakSlot(slotStart, day);
+                  const withinShift = shiftCoversSlot(day, slotStart);
+
                   if (breakLabel) {
                     return (
                       <div key={day} className="px-2 py-2 border-l border-rose-100 flex items-center justify-center">
                         <div className="w-full h-4 bg-rose-200/50 rounded-sm" />
                       </div>
+                    );
+                  }
+
+                  // Grey out cells outside any shift coverage for this day
+                  if (!withinShift) {
+                    return (
+                      <div
+                        key={day}
+                        className="border-l border-slate-100 min-h-[36px]"
+                        style={{
+                          background: 'repeating-linear-gradient(45deg, #f8fafc, #f8fafc 4px, #f1f5f9 4px, #f1f5f9 8px)',
+                        }}
+                      />
                     );
                   }
 
@@ -302,7 +332,7 @@ export function TimelineGrid({
                   return (
                     <div
                       key={day}
-                      className={`px-1.5 py-1.5 border-l border-slate-100 space-y-1 min-h-[36px] transition-colors ${
+                      className={`px-1.5 py-1.5 border-l border-slate-100 space-y-1 min-h-[36px] transition-colors hover:bg-slate-50/40 ${
                         isDragTarget ? 'bg-aqua-50 ring-2 ring-inset ring-aqua-400 rounded' : ''
                       }`}
                       onDragOver={(e) => handleCellDragOver(e, dropKey)}
@@ -322,7 +352,6 @@ export function TimelineGrid({
                         const isFirst = aStart === slotStart;
                         const isBeingDragged = draggingId === a.id;
                         const isStaffDragTarget = draggingStaffId && isDragTarget;
-
                         const endTimeOptions = ALL_END_TIMES.filter((t) => t > aStart);
 
                         return (
@@ -357,7 +386,6 @@ export function TimelineGrid({
                                   className="w-full rounded px-1.5 py-1 text-xs transition-colors overflow-hidden"
                                   style={{ backgroundColor: bgColor, border: `1px solid ${borderColor}` }}
                                 >
-                                  {/* Color bar */}
                                   {!hasViolation && a.staff_id && (
                                     <div
                                       className="absolute left-0 top-0 bottom-0 w-1 rounded-l"
@@ -466,30 +494,36 @@ export function TimelineGrid({
               </div>
             );
           })}
+        </div>
+      </div>
 
-          {/* Legend */}
-          <div className="mt-3 flex gap-4 flex-wrap px-1">
-            <div className="flex items-center gap-1.5 text-xs text-slate-500">
-              <div className="w-3 h-3 rounded border border-slate-200 bg-white relative overflow-hidden">
-                <div className="absolute left-0 top-0 bottom-0 w-1 bg-blue-500" />
-              </div>Client color = who they are
-            </div>
-            <div className="flex items-center gap-1.5 text-xs text-slate-500">
-              <div className="w-3 h-3 rounded bg-amber-100 border border-amber-200" />Unassigned
-            </div>
-            <div className="flex items-center gap-1.5 text-xs text-slate-500">
-              <div className="w-3 h-3 rounded bg-red-100 border border-red-200" />Violation
-            </div>
-            <div className="flex items-center gap-1.5 text-xs text-slate-500">
-              <CheckCircle2 size={12} className="text-aqua-400" />Note submitted
-            </div>
-            <div className="flex items-center gap-1.5 text-xs text-slate-500">
-              <FileText size={12} className="text-amber-500" />Note missing
-            </div>
-            <div className="flex items-center gap-1.5 text-xs text-slate-400">
-              <GripVertical size={12} />Drag to move
-            </div>
-          </div>
+      {/* Legend */}
+      <div className="mt-3 flex gap-4 flex-wrap px-1">
+        <div className="flex items-center gap-1.5 text-xs text-slate-500">
+          <div className="w-3 h-3 rounded border border-slate-200 bg-white relative overflow-hidden">
+            <div className="absolute left-0 top-0 bottom-0 w-1 bg-blue-500" />
+          </div>Client color = who they are
+        </div>
+        <div className="flex items-center gap-1.5 text-xs text-slate-500">
+          <div className="w-3 h-3 rounded bg-amber-100 border border-amber-200" />Unassigned
+        </div>
+        <div className="flex items-center gap-1.5 text-xs text-slate-500">
+          <div className="w-3 h-3 rounded bg-red-100 border border-red-200" />Violation
+        </div>
+        <div className="flex items-center gap-1.5 text-xs text-slate-500">
+          <div
+            className="w-3 h-3 rounded"
+            style={{ background: 'repeating-linear-gradient(45deg, #f8fafc, #f8fafc 2px, #e2e8f0 2px, #e2e8f0 4px)' }}
+          />Outside shift hours
+        </div>
+        <div className="flex items-center gap-1.5 text-xs text-slate-500">
+          <CheckCircle2 size={12} className="text-aqua-400" />Note submitted
+        </div>
+        <div className="flex items-center gap-1.5 text-xs text-slate-500">
+          <FileText size={12} className="text-amber-500" />Note missing
+        </div>
+        <div className="flex items-center gap-1.5 text-xs text-slate-400">
+          <GripVertical size={12} />Drag to move
         </div>
       </div>
     </div>

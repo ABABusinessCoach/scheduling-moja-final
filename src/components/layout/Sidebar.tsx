@@ -6,6 +6,7 @@ import {
   UserRound,
   CalendarDays,
   AlertTriangle,
+  CalendarOff,
   LogOut,
 } from 'lucide-react';
 
@@ -16,11 +17,12 @@ interface NavItem {
 }
 
 const NAV_ITEMS: NavItem[] = [
-  { id: 'dashboard',     label: 'Dashboard',     icon: <LayoutGrid size={16} /> },
-  { id: 'schedule',      label: 'Schedule',      icon: <CalendarDays size={16} /> },
-  { id: 'staff',         label: 'Staff',         icon: <Users size={16} /> },
-  { id: 'clients',       label: 'Clients',       icon: <UserRound size={16} /> },
-  { id: 'cancellations', label: 'Cancellations', icon: <AlertTriangle size={16} /> },
+  { id: 'dashboard',        label: 'Dashboard',       icon: <LayoutGrid size={16} /> },
+  { id: 'schedule',         label: 'Schedule',        icon: <CalendarDays size={16} /> },
+  { id: 'staff',            label: 'Staff',           icon: <Users size={16} /> },
+  { id: 'clients',          label: 'Clients',         icon: <UserRound size={16} /> },
+  { id: 'cancellations',    label: 'Cancellations',   icon: <AlertTriangle size={16} /> },
+  { id: 'clinic-calendar',  label: 'Clinic Calendar', icon: <CalendarOff size={16} /> },
 ];
 
 interface SidebarProps {
