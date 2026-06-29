@@ -29,49 +29,11 @@ export function LoginPage() {
   }
 
   return (
-    <div className="min-h-screen flex flex-col relative overflow-hidden" style={{ background: '#f5f8fa' }}>
-
-      {/* Brand accent blobs — per brand guide: irregular circles at 35% transparency */}
-      <div
-        className="absolute pointer-events-none"
-        style={{
-          top: '-100px',
-          right: '-100px',
-          width: '420px',
-          height: '420px',
-          borderRadius: '60% 40% 55% 45% / 45% 55% 45% 55%',
-          background: '#6dccc2',
-          opacity: 0.35,
-        }}
-      />
-      <div
-        className="absolute pointer-events-none"
-        style={{
-          bottom: '-80px',
-          left: '-80px',
-          width: '340px',
-          height: '360px',
-          borderRadius: '45% 55% 40% 60% / 55% 40% 60% 45%',
-          background: '#df76b6',
-          opacity: 0.28,
-        }}
-      />
-      <div
-        className="absolute pointer-events-none"
-        style={{
-          bottom: '-60px',
-          right: '80px',
-          width: '320px',
-          height: '340px',
-          borderRadius: '50% 50% 45% 55% / 40% 60% 40% 60%',
-          background: '#efd35c',
-          opacity: 0.32,
-        }}
-      />
+    <div className="min-h-screen flex flex-col" style={{ background: '#f5f8fa' }}>
 
       {/* Top header bar — matches the reference screenshot style */}
       <header
-        className="relative z-10 flex items-center px-6 py-3 flex-shrink-0"
+        className="flex items-center px-6 py-3 flex-shrink-0"
         style={{ background: '#2a3f55' }}
       >
         <div className="flex items-center gap-3">
@@ -95,7 +57,7 @@ export function LoginPage() {
       </header>
 
       {/* Main centered content */}
-      <div className="flex-1 flex items-center justify-center p-6 relative z-10">
+      <div className="flex-1 flex items-center justify-center p-6">
         <div className="w-full max-w-[420px]">
 
           {/* Welcome text */}
