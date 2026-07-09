@@ -18,14 +18,28 @@ interface DayWindow {
   end: string;
 }
 
-const DEFAULT_WINDOWS: DayWindow[] = ([1, 2, 3, 4, 5] as DayOfWeek[]).map(d => ({
-  day: d, enabled: false, start: '08:00', end: '14:30',
-}));
+const DEFAULT_END: Record<string, string> = {
+  summer: '15:30',
+  winter_break: '14:30',
+  spring_break: '14:30',
+  custom: '14:30',
+};
 
-function rowsToWindows(rows: SeasonalRow[]): DayWindow[] {
+function defaultEnd(periodType: string): string {
+  return DEFAULT_END[periodType] ?? '14:30';
+}
+
+function makeDefaultWindows(periodType: string): DayWindow[] {
+  return ([1, 2, 3, 4, 5] as DayOfWeek[]).map(d => ({
+    day: d, enabled: false, start: '08:00', end: defaultEnd(periodType),
+  }));
+}
+
+function rowsToWindows(rows: SeasonalRow[], periodType: string): DayWindow[] {
+  const end = defaultEnd(periodType);
   return ([1, 2, 3, 4, 5] as DayOfWeek[]).map(d => {
     const row = rows.find(r => r.day_of_week === d);
-    if (!row || !row.is_available) return { day: d, enabled: false, start: '08:00', end: '14:30' };
+    if (!row || !row.is_available) return { day: d, enabled: false, start: '08:00', end };
     return { day: d, enabled: true, start: row.time_start.slice(0, 5), end: row.time_end.slice(0, 5) };
   });
 }
@@ -128,7 +142,7 @@ export function SeasonalAvailabilitySection({ entityId, entityType }: SeasonalAv
         const currentlyActive = isCurrentlyActive(period);
         const saving = savingPeriod === period.id;
 
-        const windows: DayWindow[] = hasOverride ? rowsToWindows(rows) : DEFAULT_WINDOWS;
+        const windows: DayWindow[] = hasOverride ? rowsToWindows(rows, period.period_type) : makeDefaultWindows(period.period_type);
 
         return (
           <div

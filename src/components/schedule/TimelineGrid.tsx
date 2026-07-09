@@ -117,7 +117,7 @@ export function TimelineGrid({
   }, [activeShifts]);
 
   const timeRange = React.useMemo(() => {
-    if (!activeShifts.length) return { start: '08:00', end: '14:30' };
+    if (!activeShifts.length) return { start: '08:00', end: '15:30' };
     const starts = activeShifts.map((s) => s.time_start.slice(0, 5)).sort();
     const ends = activeShifts.map((s) => s.time_end.slice(0, 5)).sort();
     return { start: starts[0], end: ends[ends.length - 1] };

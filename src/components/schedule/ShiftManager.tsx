@@ -77,7 +77,7 @@ export function ShiftManager({ shifts, breakTimes, onClose, onRefresh }: ShiftMa
   // Shift form state
   const [newShiftLabel, setNewShiftLabel] = useState('');
   const [newShiftStart, setNewShiftStart] = useState('08:00');
-  const [newShiftEnd, setNewShiftEnd] = useState('14:30');
+  const [newShiftEnd, setNewShiftEnd] = useState('15:30');
   const [newShiftDays, setNewShiftDays] = useState<number[]>([1, 2, 3, 4, 5]);
   const [newShiftColor, setNewShiftColor] = useState(SHIFT_COLORS[0]);
   const [newShiftDateStart, setNewShiftDateStart] = useState('');

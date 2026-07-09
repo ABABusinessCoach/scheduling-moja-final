@@ -9,8 +9,8 @@ import type {
   BreakTime,
   TimeOff,
 } from '../../lib/types';
-import { DAY_NAMES, DAY_SHORT, TIME_SLOTS, formatTime, timeWindowCovers } from '../../lib/types';
-import { X, GripVertical, Users, ChevronDown, CalendarOff } from 'lucide-react';
+import { DAY_NAMES, TIME_SLOTS, formatTime, timeWindowCovers } from '../../lib/types';
+import { X, GripVertical, Users, ChevronDown, CalendarOff, AlertCircle, CheckCircle2, Clock, Ban } from 'lucide-react';
 
 function hexToRgba(hex: string, alpha: number): string {
   const clean = hex.replace('#', '');
@@ -84,6 +84,119 @@ export function ManualBuilderView({
     const dateStr = dayToDate(day);
     if (!dateStr) return null;
     return timeOff.find((t) => t.client_id === clientId && t.date_start <= dateStr && t.date_end >= dateStr) ?? null;
+  }
+
+  // ── Client scheduling status ─────────────────────────────────────────────
+
+  type ClientDayStatus =
+    | { type: 'unscheduled'; total: number }
+    | { type: 'partial'; covered: number; total: number }
+    | { type: 'scheduled'; total: number }
+    | { type: 'off'; reason: string }
+    | { type: 'unavailable'; reason: string };
+
+  function clientIsAvailableForShift(c: Client, shiftDef: ShiftDefinition): boolean {
+    const avail = c.availability ?? [];
+    const shiftStart = shiftDef.time_start.slice(0, 5);
+    const dayAvail = avail.filter((a) => a.day_of_week === selectedDay);
+
+    if (dayAvail.length > 0) {
+      return dayAvail.some((a) => {
+        const aStart = a.time_start?.slice(0, 5) ?? '';
+        const aEnd = a.time_end?.slice(0, 5) ?? '';
+        if (aStart && aEnd) return aStart <= shiftStart && aEnd > shiftStart;
+        return true; // shift-level record with no explicit times = available all day
+      });
+    }
+
+    // No records for this day specifically
+    if (avail.length > 0) return false; // has records for other days
+
+    // No availability records at all — fall back to program_type + attendance
+    const isEveShift = shiftStart >= '15:00';
+    if (c.program_type === 'daytime' && isEveShift) return false;
+    if (c.program_type === 'afterschool' && !isEveShift) return false;
+    if (selectedDay === 6) return false;
+    return (c.attendance ?? []).some((a) => a.day_of_week === selectedDay);
+  }
+
+  function clientPassesRulesForShift(c: Client, shiftDef: ShiftDefinition): boolean {
+    const rules = c.scheduling_rules ?? [];
+    if (!rules.length) return true;
+    const shiftStart = shiftDef.time_start.slice(0, 5);
+    const isMorning = shiftStart < '12:00';
+    const isAfternoon = shiftStart >= '10:30' && shiftStart < '15:00';
+    const isEve = shiftStart >= '15:00';
+    for (const rule of rules) {
+      if (rule === 'No AM sessions' && isMorning) return false;
+      if (rule === 'No PM sessions' && isAfternoon) return false;
+      if (rule === 'No After School sessions' && isEve) return false;
+      if ((rule === 'No Saturday sessions' || rule === 'Weekdays only') && selectedDay === 6) return false;
+      if (rule === 'Morning sessions only' && !isMorning) return false;
+      if (rule === 'Afternoon sessions only' && !isAfternoon) return false;
+    }
+    return true;
+  }
+
+  function getClientDayStatus(c: Client): ClientDayStatus {
+    const off = isClientOffOnDay(c.id, selectedDay);
+    if (off) return { type: 'off', reason: off.reason || 'Time off' };
+
+    const attendableShifts = dayShifts.filter(
+      (sh) => clientIsAvailableForShift(c, sh) && clientPassesRulesForShift(c, sh)
+    );
+
+    if (attendableShifts.length === 0) {
+      const avail = c.availability ?? [];
+      const attendance = c.attendance ?? [];
+      const dayAvail = avail.filter((a) => a.day_of_week === selectedDay);
+
+      if (avail.length === 0 && attendance.length === 0) {
+        return { type: 'unavailable', reason: 'No schedule set' };
+      }
+      if (avail.length === 0 && !attendance.some((a) => a.day_of_week === selectedDay)) {
+        return { type: 'unavailable', reason: 'Not attending today' };
+      }
+      if (avail.length > 0 && dayAvail.length === 0) {
+        return { type: 'unavailable', reason: 'Not available today' };
+      }
+
+      const isEveOnly = dayShifts.every((sh) => sh.time_start.slice(0, 5) >= '15:00');
+      const isDayOnly = dayShifts.every((sh) => sh.time_start.slice(0, 5) < '15:00');
+      if (c.program_type === 'afterschool' && isDayOnly) return { type: 'unavailable', reason: 'Afterschool program' };
+      if (c.program_type === 'daytime' && isEveOnly) return { type: 'unavailable', reason: 'Daytime program' };
+
+      // Find which scheduling rule is blocking all shifts
+      const blockingRule = (c.scheduling_rules ?? []).find((rule) =>
+        dayShifts.every((sh) => {
+          const s = sh.time_start.slice(0, 5);
+          const isMorn = s < '12:00', isAft = s >= '10:30' && s < '15:00', isEv = s >= '15:00';
+          if (rule === 'No AM sessions' && isMorn) return true;
+          if (rule === 'No PM sessions' && isAft) return true;
+          if (rule === 'No After School sessions' && isEv) return true;
+          if ((rule === 'No Saturday sessions' || rule === 'Weekdays only') && selectedDay === 6) return true;
+          if (rule === 'Morning sessions only' && !isMorn) return true;
+          if (rule === 'Afternoon sessions only' && !isAft) return true;
+          return false;
+        })
+      );
+      if (blockingRule) return { type: 'unavailable', reason: blockingRule };
+
+      return { type: 'unavailable', reason: 'Not available' };
+    }
+
+    const dayAssigns = clientDayAssignments(c.id);
+    const covered = attendableShifts.filter((sh) =>
+      dayAssigns.some((a) => {
+        const aStart = a.time_start?.slice(0, 5) ?? '';
+        const aEnd = a.time_end?.slice(0, 5) ?? '';
+        return timeWindowCovers(aStart, aEnd, sh.time_start.slice(0, 5), sh.time_end.slice(0, 5));
+      })
+    ).length;
+
+    if (covered === attendableShifts.length) return { type: 'scheduled', total: covered };
+    if (covered > 0) return { type: 'partial', covered, total: attendableShifts.length };
+    return { type: 'unscheduled', total: attendableShifts.length };
   }
 
   const visibleDays = useMemo(() => {
@@ -160,6 +273,16 @@ export function ManualBuilderView({
     return assignments.filter((a) => a.day_of_week === selectedDay && a.client_id === clientId);
   }
 
+  // Find an existing assignment for this client on this shift (any staff)
+  function clientShiftAssignment(clientId: string, shiftDef: ShiftDefinition): ScheduleAssignment | null {
+    return assignments.find((a) => {
+      if (a.day_of_week !== selectedDay || a.client_id !== clientId) return false;
+      const aStart = a.time_start?.slice(0, 5) ?? '';
+      const aEnd = a.time_end?.slice(0, 5) ?? '';
+      return aStart === shiftDef.time_start.slice(0, 5) && aEnd === shiftDef.time_end.slice(0, 5);
+    }) ?? null;
+  }
+
   async function handleDrop(e: React.DragEvent, staffId: string, slotStart: string) {
     e.preventDefault();
     const clientId = e.dataTransfer.getData('application/x-client-id');
@@ -173,21 +296,33 @@ export function ManualBuilderView({
       return;
     }
 
-    // Check cell is not already occupied
+    // Check cell is not already occupied by a DIFFERENT client
     const occupied = getAssignmentAtCell(staffId, slotStart);
 
-    if (clientId && !occupied) {
-      const key = `${staffId}-${slotStart}`;
-      setSaving(key);
-      await onInsert(
-        selectedDay,
-        shiftDef.name as AssignmentShift,
-        clientId,
-        staffId,
-        shiftDef.time_start.slice(0, 5),
-        shiftDef.time_end.slice(0, 5)
-      );
-      setSaving(null);
+    if (clientId) {
+      // If this client already has an assignment for this shift, reassign staff instead of inserting
+      const existingForClient = clientShiftAssignment(clientId, shiftDef);
+      if (existingForClient && existingForClient.staff_id !== staffId) {
+        // Move existing assignment to new staff (and cell must not be occupied by a different client)
+        if (!occupied || occupied.id === existingForClient.id) {
+          setSaving(existingForClient.id);
+          await onUpdateStaff(existingForClient.id, staffId);
+          setSaving(null);
+        }
+      } else if (!existingForClient && !occupied) {
+        // New assignment
+        const key = `${staffId}-${slotStart}`;
+        setSaving(key);
+        await onInsert(
+          selectedDay,
+          shiftDef.name as AssignmentShift,
+          clientId,
+          staffId,
+          shiftDef.time_start.slice(0, 5),
+          shiftDef.time_end.slice(0, 5)
+        );
+        setSaving(null);
+      }
     } else if (assignId && assignId !== (occupied?.id ?? '')) {
       setSaving(assignId);
       await onUpdateStaff(assignId, staffId);
@@ -214,7 +349,7 @@ export function ManualBuilderView({
   return (
     <div className="flex gap-4 h-full">
       {/* Client palette sidebar */}
-      <div className="w-44 flex-shrink-0">
+      <div className="w-52 flex-shrink-0">
         <button
           onClick={() => setClientPanelOpen((p) => !p)}
           className="flex items-center gap-1.5 text-xs font-semibold text-slate-500 hover:text-slate-700 transition-colors mb-2 w-full"
@@ -224,56 +359,125 @@ export function ManualBuilderView({
           <ChevronDown size={12} className={`transition-transform ${clientPanelOpen ? '' : '-rotate-90'}`} />
         </button>
 
-            {clientPanelOpen && (
-              <div className="space-y-1.5">
-                {activeClients.map((c) => {
-                  const dayAssigns = clientDayAssignments(c.id);
-                  const clientOff = isClientOffOnDay(c.id, selectedDay);
-                  const hasAll = !clientOff && dayShifts.every((sh) =>
-                    dayAssigns.some((a) => {
-                      const aStart = a.time_start?.slice(0, 5) ?? '';
-                      const aEnd = a.time_end?.slice(0, 5) ?? '';
-                      return timeWindowCovers(aStart, aEnd, sh.time_start.slice(0, 5), sh.time_end.slice(0, 5));
-                    })
-                  );
+        {clientPanelOpen && (() => {
+          const statusedClients = activeClients.map((c) => ({
+            client: c,
+            status: getClientDayStatus(c),
+          }));
 
-                  return (
-                    <div
-                      key={c.id}
-                      draggable={!hasAll && !clientOff}
-                      onDragStart={(e) => {
-                        if (hasAll || clientOff) return;
-                        setDraggingClientId(c.id);
-                        e.dataTransfer.effectAllowed = 'copy';
-                        e.dataTransfer.setData('application/x-client-id', c.id);
-                      }}
-                      onDragEnd={() => { setDraggingClientId(null); setDragOver(null); }}
-                      className={`flex items-center gap-1.5 px-2.5 py-2 rounded-lg border text-xs font-medium transition-colors select-none ${
-                        clientOff
-                          ? 'bg-amber-50 border-amber-200 text-amber-600 cursor-not-allowed'
-                          : hasAll
-                          ? 'bg-slate-50 border-slate-100 text-slate-300 cursor-not-allowed'
-                          : draggingClientId === c.id
-                          ? 'opacity-40 bg-aqua-50 border-aqua-300 text-aqua-700 cursor-grabbing'
-                          : 'bg-white border-slate-200 text-slate-700 cursor-grab hover:border-aqua-300 hover:bg-aqua-50'
-                      }`}
-                    >
-                      {clientOff ? <CalendarOff size={10} className="text-amber-500 flex-shrink-0" /> : <GripVertical size={10} className="text-slate-300 flex-shrink-0" />}
-                      <span
-                        className="w-2 h-2 rounded-full flex-shrink-0"
-                        style={{ backgroundColor: c.color || '#0ea5e9', opacity: clientOff || hasAll ? 0.4 : 1 }}
-                      />
-                      <span className="truncate">{c.first_name} {c.last_name}</span>
-                      {clientOff && <span className="ml-auto text-amber-500 text-[9px] font-semibold whitespace-nowrap">Off</span>}
-                      {!clientOff && dayAssigns.length > 0 && (
-                        <span className="ml-auto text-aqua-500 font-bold text-[10px]">{dayAssigns.length}</span>
-                      )}
+          const statusOrder: Record<string, number> = {
+            unscheduled: 0, partial: 1, scheduled: 2, off: 3, unavailable: 4,
+          };
+          const sorted = [...statusedClients].sort(
+            (a, b) => (statusOrder[a.status.type] ?? 5) - (statusOrder[b.status.type] ?? 5)
+          );
+
+          const mustScheduleCount = statusedClients.filter(
+            (cs) => cs.status.type === 'unscheduled' || cs.status.type === 'partial'
+          ).length;
+
+          return (
+            <div className="space-y-1.5">
+              {/* Alert banner */}
+              {mustScheduleCount > 0 && (
+                <div className="flex items-center gap-1.5 px-2.5 py-2 bg-red-50 border border-red-200 rounded-lg mb-2">
+                  <AlertCircle size={12} className="text-red-500 flex-shrink-0" />
+                  <span className="text-[11px] font-semibold text-red-700 leading-tight">
+                    {mustScheduleCount} client{mustScheduleCount !== 1 ? 's' : ''} need{mustScheduleCount === 1 ? 's' : ''} scheduling
+                  </span>
+                </div>
+              )}
+
+              {sorted.map(({ client: c, status }) => {
+                const isDraggable = status.type !== 'off' && status.type !== 'unavailable';
+                const isBeingDragged = draggingClientId === c.id;
+
+                const cardClass = (() => {
+                  if (status.type === 'unscheduled') return 'bg-red-50 border-red-300 text-red-900 border-l-[3px] border-l-red-500';
+                  if (status.type === 'partial') return 'bg-orange-50 border-orange-200 text-orange-900 border-l-[3px] border-l-orange-400';
+                  if (status.type === 'scheduled') return 'bg-teal-50 border-teal-200 text-teal-800';
+                  if (status.type === 'off') return 'bg-amber-50 border-amber-200 text-amber-700';
+                  return 'bg-slate-50 border-slate-100 text-slate-400';
+                })();
+
+                const cursorClass = !isDraggable
+                  ? 'cursor-default'
+                  : isBeingDragged
+                  ? 'cursor-grabbing opacity-40'
+                  : 'cursor-grab';
+
+                return (
+                  <div
+                    key={c.id}
+                    draggable={isDraggable}
+                    onDragStart={(e) => {
+                      if (!isDraggable) return;
+                      setDraggingClientId(c.id);
+                      e.dataTransfer.effectAllowed = 'copy';
+                      e.dataTransfer.setData('application/x-client-id', c.id);
+                    }}
+                    onDragEnd={() => { setDraggingClientId(null); setDragOver(null); }}
+                    className={`flex items-start gap-1.5 px-2.5 py-2 rounded-lg border text-xs font-medium transition-colors select-none ${cardClass} ${cursorClass}`}
+                  >
+                    {/* Status icon */}
+                    <div className="mt-0.5 flex-shrink-0">
+                      {status.type === 'unscheduled' && <AlertCircle size={11} className="text-red-500" />}
+                      {status.type === 'partial' && <Clock size={11} className="text-orange-500" />}
+                      {status.type === 'scheduled' && <CheckCircle2 size={11} className="text-teal-500" />}
+                      {status.type === 'off' && <CalendarOff size={11} className="text-amber-500" />}
+                      {status.type === 'unavailable' && <Ban size={11} className="text-slate-300" />}
                     </div>
-                  );
-                })}
-                <p className="text-[10px] text-slate-400 mt-2 px-1">Drag to a staff column to assign</p>
-              </div>
-            )}
+
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-1.5">
+                        <span
+                          className="w-2 h-2 rounded-full flex-shrink-0"
+                          style={{ backgroundColor: c.color || '#0ea5e9', opacity: status.type === 'unavailable' ? 0.35 : 1 }}
+                        />
+                        <span className="truncate font-semibold leading-tight">
+                          {c.first_name} {c.last_name}
+                        </span>
+                      </div>
+
+                      {/* Status line */}
+                      <div className="mt-0.5 text-[10px] leading-tight">
+                        {status.type === 'unscheduled' && (
+                          <span className="text-red-600 font-semibold">
+                            Must schedule · {status.total} shift{status.total !== 1 ? 's' : ''}
+                          </span>
+                        )}
+                        {status.type === 'partial' && (
+                          <span className="text-orange-600 font-semibold">
+                            {status.covered}/{status.total} shifts assigned
+                          </span>
+                        )}
+                        {status.type === 'scheduled' && (
+                          <span className="text-teal-600">
+                            All {status.total} shift{status.total !== 1 ? 's' : ''} covered
+                          </span>
+                        )}
+                        {status.type === 'off' && (
+                          <span className="text-amber-600 truncate block">{status.reason}</span>
+                        )}
+                        {status.type === 'unavailable' && (
+                          <span className="text-slate-400 truncate block">{status.reason}</span>
+                        )}
+                      </div>
+                    </div>
+
+                    {isDraggable && !isBeingDragged && (
+                      <GripVertical size={10} className="text-slate-300 flex-shrink-0 mt-1" />
+                    )}
+                  </div>
+                );
+              })}
+
+              <p className="text-[10px] text-slate-400 mt-2 px-1 leading-relaxed">
+                Drag a client card to a staff column to assign
+              </p>
+            </div>
+          );
+        })()}
       </div>
 
       {/* Main grid */}
@@ -366,7 +570,6 @@ export function ManualBuilderView({
                         <span className={`text-[11px] font-semibold ${breakLabel ? 'text-rose-500' : 'text-slate-500'}`}>
                           {formatTime(slotStart)}
                         </span>
-                        {breakLabel && <span className="text-[9px] text-rose-400">{breakLabel}</span>}
                       </div>
 
                       {/* Staff cells */}
@@ -423,10 +626,12 @@ export function ManualBuilderView({
                                 draggable
                                 onDragStart={(e) => {
                                   setDraggingAssignmentId(existing.id);
+                                  setDraggingClientId(existing.client_id);
                                   e.dataTransfer.effectAllowed = 'move';
                                   e.dataTransfer.setData('application/x-assignment-id', existing.id);
+                                  e.dataTransfer.setData('application/x-client-id', existing.client_id);
                                 }}
-                                onDragEnd={() => { setDraggingAssignmentId(null); setDragOver(null); }}
+                                onDragEnd={() => { setDraggingAssignmentId(null); setDraggingClientId(null); setDragOver(null); }}
                                 className={`group relative rounded-lg px-2 py-1.5 text-xs font-medium cursor-grab active:cursor-grabbing transition-opacity ${
                                   isSaving ? 'opacity-50' : 'opacity-100'
                                 }`}

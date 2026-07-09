@@ -75,7 +75,7 @@ export function ClientForm({ client, onSave, onCancel }: ClientFormProps) {
     day: d,
     enabled: d !== 6,
     start: d === 6 ? '09:00' : '08:00',
-    end: d === 6 ? '15:00' : '14:30',
+    end: d === 6 ? '15:00' : '15:30',
   }));
   const [dayWindows, setDayWindows] = useState<DayWindow[]>(defaultWindows);
 
@@ -119,9 +119,9 @@ export function ClientForm({ client, onSave, onCancel }: ClientFormProps) {
     if (daytimeRows.length > 0) {
       const windows: DayWindow[] = DAYS.map((d) => {
         const row = daytimeRows.find((a: any) => a.day_of_week === d);
-        if (!row) return { day: d, enabled: false, start: d === 6 ? '09:00' : '08:00', end: d === 6 ? '15:00' : '14:30' };
+        if (!row) return { day: d, enabled: false, start: d === 6 ? '09:00' : '08:00', end: d === 6 ? '15:00' : '15:30' };
         const start = row.time_start ? row.time_start.slice(0, 5) : AVAILABILITY_PRESETS[row.shift as AvailabilityShift]?.start ?? '08:00';
-        const end = row.time_end ? row.time_end.slice(0, 5) : AVAILABILITY_PRESETS[row.shift as AvailabilityShift]?.end ?? '14:30';
+        const end = row.time_end ? row.time_end.slice(0, 5) : AVAILABILITY_PRESETS[row.shift as AvailabilityShift]?.end ?? '15:30';
         return { day: d, enabled: true, start, end };
       });
       setDayWindows(windows);
@@ -159,14 +159,13 @@ export function ClientForm({ client, onSave, onCancel }: ClientFormProps) {
 
   function applyPreset(preset: 'FULL' | 'AM' | 'PM' | 'ALL_DAYS') {
     if (preset === 'ALL_DAYS') {
-      setDayWindows(DAYS.map((d) => ({ day: d, enabled: d !== 6, start: d === 6 ? '09:00' : '08:00', end: d === 6 ? '15:00' : '14:30' })));
+      setDayWindows(DAYS.map((d) => ({ day: d, enabled: d !== 6, start: d === 6 ? '09:00' : '08:00', end: d === 6 ? '15:00' : '15:30' })));
       return;
     }
-    // Clients' full day ends at 14:30 (daytime program), not 18:00
     const presetTimes: Record<'AM' | 'PM' | 'FULL', { start: string; end: string }> = {
       AM:   { start: '08:00', end: '10:30' },
-      PM:   { start: '10:30', end: '14:30' },
-      FULL: { start: '08:00', end: '14:30' },
+      PM:   { start: '10:30', end: '15:30' },
+      FULL: { start: '08:00', end: '15:30' },
     };
     const { start, end } = presetTimes[preset];
     setDayWindows((prev) => prev.map((w) => (w.enabled && w.day !== 6 ? { ...w, start, end } : w)));
@@ -282,7 +281,7 @@ export function ClientForm({ client, onSave, onCancel }: ClientFormProps) {
 
       const derivedShift: ShiftType = (() => {
         if (enabledDaytimeDays.length === 0) return programType === 'afterschool' ? 'FULL' : 'FULL';
-        const allFull = enabledDaytimeDays.every((w) => w.start === '08:00' && w.end === '14:30');
+        const allFull = enabledDaytimeDays.every((w) => w.start === '08:00' && (w.end === '14:30' || w.end === '15:30'));
         const allAM = enabledDaytimeDays.every((w) => w.end <= '10:30');
         const allPM = enabledDaytimeDays.every((w) => w.start >= '10:30');
         if (allFull) return 'FULL';
@@ -570,7 +569,7 @@ export function ClientForm({ client, onSave, onCancel }: ClientFormProps) {
                       <div className="px-3 py-3 flex items-center justify-end">
                         <span className={`text-xs font-medium rounded-full px-2 py-0.5 ${
                           !w.enabled ? 'text-slate-300' :
-                          w.end === '14:30' && w.start === '08:00' ? 'bg-aqua-100 text-aqua-700' :
+                          w.end === '15:30' && w.start === '08:00' ? 'bg-aqua-100 text-aqua-700' :
                           w.end <= '10:30' ? 'bg-amber-100 text-amber-700' :
                           'bg-blue-100 text-blue-700'
                         }`}>

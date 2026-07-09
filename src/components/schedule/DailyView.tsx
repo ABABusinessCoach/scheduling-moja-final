@@ -137,7 +137,7 @@ export function DailyView({
 
   // Staff who work this day (have availability on this day)
   const dayStaff = staff.filter((s) => s.is_active && staffWorksDay(s, day))
-    .sort((a, b) => a.priority_tier - b.priority_tier);
+    .sort((a, b) => a.priority_tier - b.priority_tier || a.name.localeCompare(b.name));
 
   // Does a slot fall within any active shift for this day?
   function slotWithinDayShift(slotStart: string): boolean {
@@ -250,9 +250,6 @@ export function DailyView({
                         <span className={`text-xs font-semibold ${breakName ? 'text-rose-600' : 'text-slate-500'}`}>
                           {formatTime(slotStart)}
                         </span>
-                        {breakName && (
-                          <span className="text-[9px] text-rose-400 font-medium leading-tight">{breakName}</span>
-                        )}
                       </div>
 
                       {/* Staff columns */}

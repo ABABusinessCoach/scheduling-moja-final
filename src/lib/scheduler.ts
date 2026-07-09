@@ -7,12 +7,12 @@ import {
   AssignmentShift,
   ShiftDefinition,
   SHIFT_TIMES,
-  SHIFT_DAYS,
   StaffHours,
   RatioAlert,
   CoverageRecommendation,
   StaffCancellationAnalysis,
   TimeOff,
+  SeasonalPeriod,
   slotDuration,
   timeWindowCovers,
   RampUpEntry,
@@ -22,47 +22,74 @@ function shiftTimes(shift: AssignmentShift): { start: string; end: string } {
   return { start: SHIFT_TIMES[shift].start, end: SHIFT_TIMES[shift].end };
 }
 
-// Check if staff availability covers an explicit time window on a given day
-function staffCanWorkWindow(staff: Staff, day: DayOfWeek, wStart: string, wEnd: string): boolean {
-  const avail = staff.availability ?? [];
-  return avail.some((a) => {
-    if (a.day_of_week !== day) return false;
-    if (a.time_start && a.time_end) {
-      return timeWindowCovers(a.time_start.slice(0, 5), a.time_end.slice(0, 5), wStart, wEnd);
-    }
-    // Fallback: named shift coverage
-    const key = a.shift as AssignmentShift;
-    if (SHIFT_TIMES[key]) {
-      return timeWindowCovers(SHIFT_TIMES[key].start, SHIFT_TIMES[key].end, wStart, wEnd);
-    }
-    return a.shift === 'FULL';
-  });
+// Returns true if the union of `ranges` continuously extends PAST `sessionStart`
+// with no gap, meaning the person is available at the start of the session.
+// Uses strict > so that e.g. SAT_AM (9-12) does NOT qualify for SAT_PM (start=12).
+function unionsReachesStart(
+  ranges: { start: string; end: string }[],
+  sessionStart: string
+): boolean {
+  const sorted = [...ranges].sort((a, b) => a.start.localeCompare(b.start));
+  if (!sorted.length || sorted[0].start > sessionStart) return false;
+  let covered = sorted[0].start;
+  for (const r of sorted) {
+    if (r.start > covered) break; // gap — union doesn't reach any further
+    if (r.end > covered) covered = r.end;
+    if (covered > sessionStart) return true;
+  }
+  return false;
 }
 
-// Check if client availability covers an explicit time window on a given day
-function clientCanAttendWindow(client: Client, day: DayOfWeek, wStart: string, wEnd: string): boolean {
-  const isEveningWindow = wStart >= '15:00';
+// Collect the concrete time ranges from one availability record.
+function availRanges(
+  a: { shift: string; time_start: string | null; time_end: string | null }
+): { start: string; end: string } | null {
+  if (a.time_start && a.time_end) {
+    return { start: a.time_start.slice(0, 5), end: a.time_end.slice(0, 5) };
+  }
+  const key = a.shift as AssignmentShift;
+  if (SHIFT_TIMES[key]) return { start: SHIFT_TIMES[key].start, end: SHIFT_TIMES[key].end };
+  if (a.shift === 'FULL') return { start: '08:00', end: '18:00' };
+  return null;
+}
 
-  // Respect program_type: daytime clients skip EVE; afterschool clients skip daytime
+// Check if the person's availability reaches the session start (no gap before wStart).
+// This allows staff/clients whose availability extends through noon (e.g. PM: 10:30–14:30)
+// to be scheduled for an afternoon session starting at 12:00, even if they can't cover
+// the full session end time.
+function staffCanWorkWindow(staff: Staff, day: DayOfWeek, wStart: string, wEnd: string): boolean {
+  const dayAvail = (staff.availability ?? []).filter(a => a.day_of_week === day);
+  if (dayAvail.length === 0) return false;
+  const ranges = dayAvail.map(availRanges).filter(Boolean) as { start: string; end: string }[];
+  return unionsReachesStart(ranges, wStart);
+}
+
+// Check if the union of a client's availability windows reaches the session start.
+// Explicit time-based availability bypasses program_type restrictions (e.g. summer seasonal overrides).
+function clientCanAttendWindow(client: Client, day: DayOfWeek, wStart: string, wEnd: string): boolean {
+  const avail = client.availability ?? [];
+  const dayAvail = avail.filter(a => a.day_of_week === day);
+
+  if (dayAvail.length > 0) {
+    const ranges = dayAvail.map(availRanges).filter(Boolean) as { start: string; end: string }[];
+    if (ranges.length > 0) {
+      // Explicit availability is authoritative — skip program_type filter
+      return unionsReachesStart(ranges, wStart);
+    }
+  }
+
+  // No explicit availability records — fall back to program_type + attendance
+  const isEveningWindow = wStart >= '15:00';
   if (client.program_type === 'daytime' && isEveningWindow) return false;
   if (client.program_type === 'afterschool' && !isEveningWindow) return false;
 
-  const avail = client.availability ?? [];
   if (avail.length === 0) {
     if (day === 6) return false;
     return (client.attendance ?? []).some((a) => a.day_of_week === day);
   }
-  return avail.some((a) => {
-    if (a.day_of_week !== day) return false;
-    if (a.time_start && a.time_end) {
-      return timeWindowCovers(a.time_start.slice(0, 5), a.time_end.slice(0, 5), wStart, wEnd);
-    }
-    const key = a.shift as AssignmentShift;
-    if (SHIFT_TIMES[key]) {
-      return timeWindowCovers(SHIFT_TIMES[key].start, SHIFT_TIMES[key].end, wStart, wEnd);
-    }
-    return false;
-  });
+
+  // Shift-only availability with no day match — unreachable but safe fallback
+  return false;
 }
 
 // Named-shift wrappers used by getStaffCoverageRankings
@@ -89,16 +116,16 @@ function isRestricted(staffId: string, clientId: string, restrictions: StaffClie
 
 function clientPassesSchedulingRules(client: Client, day: DayOfWeek, shift: AssignmentShift): boolean {
   const rules = client.scheduling_rules ?? [];
+  const isMorning  = shift === 'AM' || shift === 'AM_SESSION' || shift === 'SUM_HALF' || shift === 'SAT_AM';
+  const isAfternoon = shift === 'PM' || shift === 'LATE_AM' || shift === 'SUMMER_HALF_DAY_PM' || shift === 'SAT_PM';
+  const isEve = shift === 'EVE';
   for (const rule of rules) {
-    if (rule === 'No AM sessions' && shift === 'AM') return false;
-    if (rule === 'No PM sessions' && shift === 'PM') return false;
-    if (rule === 'No After School sessions' && shift === 'EVE') return false;
+    if (rule === 'No AM sessions' && isMorning) return false;
+    if (rule === 'No PM sessions' && isAfternoon) return false;
+    if (rule === 'No After School sessions' && isEve) return false;
     if ((rule === 'No Saturday sessions' || rule === 'Weekdays only') && day === 6) return false;
-    if (rule === 'Morning sessions only' && shift !== 'AM') return false;
-    if (rule === 'Afternoon sessions only' && shift !== 'PM') return false;
-    if (rule === 'Requires male therapist') {
-      // handled at assignment level, not here
-    }
+    if (rule === 'Morning sessions only' && !isMorning) return false;
+    if (rule === 'Afternoon sessions only' && !isAfternoon) return false;
   }
   return true;
 }
@@ -159,6 +186,33 @@ export function getRampUpTarget(rampUp: RampUpEntry[] | null | undefined, weekNu
   return target;
 }
 
+// Default session blocks when no DB shifts are configured.
+// Regular: morning 8-12, afternoon 12-14:30, afterschool 15-18, Saturday blocks.
+// Seasonal: morning 8-12, afternoon 12-15:30 (extended), Saturday blocks (no EVE).
+function buildFallbackShifts(isSeasonal: boolean): ShiftDefinition[] {
+  const stub = (name: string, label: string, start: string, end: string, days: number[]): ShiftDefinition =>
+    ({ id: '', name, label, time_start: start, time_end: end, days, color: '', sort_order: 0, is_active: true, created_at: '', date_start: null, date_end: null });
+  const weekdays = [1, 2, 3, 4, 5];
+  const shifts: ShiftDefinition[] = [
+    stub('AM_SESSION',         'Morning',      '08:00', '12:00', weekdays),
+    stub(
+      isSeasonal ? 'SUMMER_HALF_DAY_PM' : 'LATE_AM',
+      'Afternoon',
+      '12:00',
+      isSeasonal ? '15:30' : '14:30',
+      weekdays
+    ),
+  ];
+  if (!isSeasonal) {
+    shifts.push(stub('EVE', 'After School', '15:00', '18:00', weekdays));
+  }
+  shifts.push(
+    stub('SAT_AM', 'Sat Morning',   '09:00', '12:00', [6]),
+    stub('SAT_PM', 'Sat Afternoon',  '12:00', '15:00', [6]),
+  );
+  return shifts;
+}
+
 export function generateWeeklySchedule(
   scheduleId: string,
   staff: Staff[],
@@ -167,7 +221,8 @@ export function generateWeeklySchedule(
   weekNumber = 1,
   weekStartDate?: string,
   timeOff: TimeOff[] = [],
-  weekShifts: ShiftDefinition[] = []
+  weekShifts: ShiftDefinition[] = [],
+  activeSeason: SeasonalPeriod | null = null
 ): Omit<ScheduleAssignment, 'id' | 'created_at'>[] {
   const assignments: Omit<ScheduleAssignment, 'id' | 'created_at'>[] = [];
   const activeStaff = staff.filter((s) => {
@@ -227,14 +282,8 @@ export function generateWeeklySchedule(
     bookedSlots.get(key)!.add(staffId);
   }
 
-  // Use provided DB shifts; fall back to standard shifts if none passed
-  const shiftsToUse: ShiftDefinition[] = weekShifts.length > 0 ? weekShifts : [
-    { id: '', name: 'AM',     label: 'AM',     time_start: '08:00', time_end: '10:30', days: [1,2,3,4,5], color: '', sort_order: 0, is_active: true, created_at: '', date_start: null, date_end: null },
-    { id: '', name: 'PM',     label: 'PM',     time_start: '10:30', time_end: '14:30', days: [1,2,3,4,5], color: '', sort_order: 1, is_active: true, created_at: '', date_start: null, date_end: null },
-    { id: '', name: 'EVE',    label: 'Afternoon', time_start: '15:00', time_end: '18:00', days: [1,2,3,4,5], color: '', sort_order: 2, is_active: true, created_at: '', date_start: null, date_end: null },
-    { id: '', name: 'SAT_AM', label: 'Sat AM', time_start: '09:00', time_end: '12:00', days: [6],     color: '', sort_order: 3, is_active: true, created_at: '', date_start: null, date_end: null },
-    { id: '', name: 'SAT_PM', label: 'Sat PM', time_start: '12:00', time_end: '15:00', days: [6],     color: '', sort_order: 4, is_active: true, created_at: '', date_start: null, date_end: null },
-  ];
+  // Use provided DB shifts; fall back to session-block defaults based on season
+  const shiftsToUse: ShiftDefinition[] = weekShifts.length > 0 ? weekShifts : buildFallbackShifts(!!activeSeason);
 
   for (const shiftDef of shiftsToUse) {
     const shiftName = shiftDef.name as AssignmentShift;
@@ -381,13 +430,7 @@ export function computeRatioAlerts(
   const activeStaff = staff.filter((s) => s.is_active);
   const activeClients = clients.filter((c) => c.is_active);
 
-  const shiftsToCheck: ShiftDefinition[] = weekShifts.length > 0 ? weekShifts : [
-    { id: '', name: 'AM',     label: 'AM',     time_start: '08:00', time_end: '10:30', days: [1,2,3,4,5], color: '', sort_order: 0, is_active: true, created_at: '', date_start: null, date_end: null },
-    { id: '', name: 'PM',     label: 'PM',     time_start: '10:30', time_end: '14:30', days: [1,2,3,4,5], color: '', sort_order: 1, is_active: true, created_at: '', date_start: null, date_end: null },
-    { id: '', name: 'EVE',    label: 'Afternoon', time_start: '15:00', time_end: '18:00', days: [1,2,3,4,5], color: '', sort_order: 2, is_active: true, created_at: '', date_start: null, date_end: null },
-    { id: '', name: 'SAT_AM', label: 'Sat AM', time_start: '09:00', time_end: '12:00', days: [6],     color: '', sort_order: 3, is_active: true, created_at: '', date_start: null, date_end: null },
-    { id: '', name: 'SAT_PM', label: 'Sat PM', time_start: '12:00', time_end: '15:00', days: [6],     color: '', sort_order: 4, is_active: true, created_at: '', date_start: null, date_end: null },
-  ];
+  const shiftsToCheck: ShiftDefinition[] = weekShifts.length > 0 ? weekShifts : buildFallbackShifts(false);
 
   for (const shiftDef of shiftsToCheck) {
     const shiftName = shiftDef.name as AssignmentShift;

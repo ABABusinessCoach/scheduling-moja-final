@@ -299,7 +299,7 @@ export function WeeklyGrid({
                                 >
                                   — Unassign
                                 </button>
-                                {eligibleStaff.sort((a, b) => a.priority_tier - b.priority_tier).map((s) => (
+                                {eligibleStaff.sort((a, b) => a.priority_tier - b.priority_tier || a.name.localeCompare(b.name)).map((s) => (
                                   <button
                                     key={s.id}
                                     onClick={() => { if (assignment) onUpdateAssignment(assignment.id, s.id); setEditingCell(null); }}

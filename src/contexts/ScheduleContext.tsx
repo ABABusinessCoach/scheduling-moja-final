@@ -74,69 +74,95 @@ export function ScheduleProvider({ children }: { children: React.ReactNode }) {
   const [staffSeasonalAvail, setStaffSeasonalAvail] = useState<StaffSeasonalAvailability[]>([]);
   const [clientSeasonalAvail, setClientSeasonalAvail] = useState<ClientSeasonalAvailability[]>([]);
 
-  // The season whose date range contains currentMonday
+  // The season whose date range overlaps the current week (same logic as shiftsForWeek)
   const activeSeason = useMemo<SeasonalPeriod | null>(() => {
-    const weekStr = format(currentMonday, 'yyyy-MM-dd');
-    return seasonalPeriods.find(p => p.is_active && weekStr >= p.date_start && weekStr <= p.date_end) ?? null;
+    const mondayStr = format(currentMonday, 'yyyy-MM-dd');
+    const weekEnd = new Date(currentMonday);
+    weekEnd.setDate(weekEnd.getDate() + 6);
+    const weekEndStr = format(weekEnd, 'yyyy-MM-dd');
+    return seasonalPeriods.find(p => p.is_active && p.date_start <= weekEndStr && p.date_end >= mondayStr) ?? null;
   }, [seasonalPeriods, currentMonday]);
 
   // Staff with seasonal availability substituted in when in season
   const effectiveStaff = useMemo<Staff[]>(() => {
     if (!activeSeason) return staff;
+    // Compute the latest shift end for this season so we can auto-extend availability
+    const seasonEnd = activeSeason.period_type === 'summer' ? '15:30' : '14:30';
     return staff.map(s => {
       const overrides = staffSeasonalAvail.filter(r => r.staff_id === s.id && r.period_id === activeSeason.id);
-      if (!overrides.length) return s;
-      const base = s.availability ?? [];
-      // Replace existing availability days with seasonal overrides; keep days not overridden
-      const merged = base.map(a => {
-        const ov = overrides.find(r => r.day_of_week === a.day_of_week);
-        if (!ov) return a;
-        if (!ov.is_available) return null;
-        return { ...a, time_start: ov.time_start, time_end: ov.time_end };
-      }).filter(Boolean) as typeof base;
-      // Add days that only exist in seasonal (not in regular)
-      for (const ov of overrides) {
-        if (ov.is_available && !base.find(a => a.day_of_week === ov.day_of_week)) {
-          merged.push({
-            id: `seasonal_${ov.id}`,
-            staff_id: s.id,
-            day_of_week: ov.day_of_week as DayOfWeek,
-            shift: 'FULL',
-            time_start: ov.time_start,
-            time_end: ov.time_end,
-          });
+      if (overrides.length) {
+        const base = s.availability ?? [];
+        const merged = base.map(a => {
+          const ov = overrides.find(r => r.day_of_week === a.day_of_week);
+          if (!ov) return a;
+          if (!ov.is_available) return null;
+          return { ...a, time_start: ov.time_start, time_end: ov.time_end };
+        }).filter(Boolean) as typeof base;
+        for (const ov of overrides) {
+          if (ov.is_available && !base.find(a => a.day_of_week === ov.day_of_week)) {
+            merged.push({
+              id: `seasonal_${ov.id}`,
+              staff_id: s.id,
+              day_of_week: ov.day_of_week as DayOfWeek,
+              shift: 'FULL',
+              time_start: ov.time_start,
+              time_end: ov.time_end,
+            });
+          }
         }
+        return { ...s, availability: merged };
       }
-      return { ...s, availability: merged };
+      // No overrides: auto-extend PM availability to match seasonal end
+      const base = s.availability ?? [];
+      const extended = base.map(a => {
+        const end = (a.time_end ?? '').slice(0, 5);
+        if (end && end >= '14:00' && end <= '14:59') {
+          return { ...a, time_end: seasonEnd };
+        }
+        return a;
+      });
+      return { ...s, availability: extended };
     });
   }, [staff, activeSeason, staffSeasonalAvail]);
 
   // Clients with seasonal availability substituted in when in season
   const effectiveClients = useMemo<Client[]>(() => {
     if (!activeSeason) return clients;
+    const seasonEnd = activeSeason.period_type === 'summer' ? '15:30' : '14:30';
     return clients.map(c => {
       const overrides = clientSeasonalAvail.filter(r => r.client_id === c.id && r.period_id === activeSeason.id);
-      if (!overrides.length) return c;
-      const base = c.availability ?? [];
-      const merged = base.map(a => {
-        const ov = overrides.find(r => r.day_of_week === a.day_of_week);
-        if (!ov) return a;
-        if (!ov.is_available) return null;
-        return { ...a, time_start: ov.time_start, time_end: ov.time_end };
-      }).filter(Boolean) as typeof base;
-      for (const ov of overrides) {
-        if (ov.is_available && !base.find(a => a.day_of_week === ov.day_of_week)) {
-          merged.push({
-            id: `seasonal_${ov.id}`,
-            client_id: c.id,
-            day_of_week: ov.day_of_week as DayOfWeek,
-            shift: 'FULL',
-            time_start: ov.time_start,
-            time_end: ov.time_end,
-          });
+      if (overrides.length) {
+        const base = c.availability ?? [];
+        const merged = base.map(a => {
+          const ov = overrides.find(r => r.day_of_week === a.day_of_week);
+          if (!ov) return a;
+          if (!ov.is_available) return null;
+          return { ...a, time_start: ov.time_start, time_end: ov.time_end };
+        }).filter(Boolean) as typeof base;
+        for (const ov of overrides) {
+          if (ov.is_available && !base.find(a => a.day_of_week === ov.day_of_week)) {
+            merged.push({
+              id: `seasonal_${ov.id}`,
+              client_id: c.id,
+              day_of_week: ov.day_of_week as DayOfWeek,
+              shift: 'FULL',
+              time_start: ov.time_start,
+              time_end: ov.time_end,
+            });
+          }
         }
+        return { ...c, availability: merged };
       }
-      return { ...c, availability: merged };
+      // No overrides: auto-extend PM availability to match seasonal end
+      const base = c.availability ?? [];
+      const extended = base.map(a => {
+        const end = (a.time_end ?? '').slice(0, 5);
+        if (end && end >= '14:00' && end <= '14:59') {
+          return { ...a, time_end: seasonEnd };
+        }
+        return a;
+      });
+      return { ...c, availability: extended };
     });
   }, [clients, activeSeason, clientSeasonalAvail]);
 
@@ -281,14 +307,14 @@ export function ScheduleProvider({ children }: { children: React.ReactNode }) {
   async function handleInsertAssignment(day: DayOfWeek, shift: AssignmentShift, clientId: string, staffId: string, timeStart?: string, timeEnd?: string) {
     if (!schedule) return;
     const times = SHIFT_TIMES[shift];
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from('schedule_assignments')
       .insert({
         schedule_id: schedule.id,
         day_of_week: day,
         shift,
-        time_start: timeStart ?? times.start,
-        time_end: timeEnd ?? times.end,
+        time_start: timeStart ?? times?.start,
+        time_end: timeEnd ?? times?.end,
         staff_id: staffId,
         client_id: clientId,
         is_manual_override: true,
@@ -296,6 +322,10 @@ export function ScheduleProvider({ children }: { children: React.ReactNode }) {
       })
       .select('*, staff(*,staff_availability(*)), client:clients(*,client_attendance(*),client_availability(*))')
       .single();
+    if (error) {
+      console.error('Insert assignment error:', error);
+      return;
+    }
     if (data) {
       const mapped = {
         ...data,

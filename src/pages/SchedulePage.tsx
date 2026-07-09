@@ -35,7 +35,6 @@ import {
   RotateCcw,
   Send,
   Bell,
-  Sun,
 } from 'lucide-react';
 
 type ViewMode = 'timeline' | 'daily' | 'grid' | 'staff' | 'client' | 'builder' | 'offers';
@@ -70,7 +69,7 @@ export function SchedulePage() {
     handleToggleNote,
   } = useSchedule();
 
-  const [viewMode, setViewMode] = useState<ViewMode>('timeline');
+  const [viewMode, setViewMode] = useState<ViewMode>('daily');
   const [selectedDay, setSelectedDay] = useState<DayOfWeek>(1);
   const [generating, setGenerating] = useState(false);
   const [alertsDismissed, setAlertsDismissed] = useState(false);
@@ -124,7 +123,8 @@ export function SchedulePage() {
         1,
         weekStr,
         timeOffForWeek,
-        shiftsForWeek
+        shiftsForWeek,
+        activeSeason
       );
       if (generated.length > 0) {
         const { error: insertError } = await supabase.from('schedule_assignments').insert(generated);
@@ -176,12 +176,11 @@ export function SchedulePage() {
   }).length;
 
   const VIEW_TABS = [
-    { id: 'timeline', icon: <Clock size={14} />, label: 'Timeline' },
+    { id: 'builder',  icon: <Hammer size={14} />, label: 'Builder' },
     { id: 'daily',    icon: <Calendar size={14} />, label: 'Daily' },
     { id: 'grid',     icon: <CalendarDays size={14} />, label: 'Grid' },
     { id: 'staff',    icon: <Users size={14} />, label: 'By Staff' },
     { id: 'client',   icon: <UserRound size={14} />, label: 'By Client' },
-    { id: 'builder',  icon: <Hammer size={14} />, label: 'Builder' },
     { id: 'offers',   icon: <Bell size={14} />, label: 'Offers', badge: unassignedCount > 0 ? unassignedCount : undefined },
   ];
 
@@ -200,14 +199,6 @@ export function SchedulePage() {
   return (
     <div className="flex gap-5 h-full">
       <div className="flex-1 min-w-0">
-        {/* Season banner */}
-        {activeSeason && (
-          <div className="flex items-center gap-2 px-3 py-2 mb-3 rounded-xl text-sm font-medium bg-amber-50 border border-amber-200 text-amber-800">
-            <Sun size={14} className="text-amber-500 flex-shrink-0" />
-            <span><strong>{activeSeason.name}</strong> is active — seasonal availability overrides are applied.</span>
-          </div>
-        )}
-
         {/* Week nav */}
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-2">
@@ -243,9 +234,41 @@ export function SchedulePage() {
               </span>
             )}
             {violationCount > 0 && (
-              <span className="flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-red-100 text-red-700">
-                <AlertTriangle size={12} /> {violationCount} violation{violationCount !== 1 ? 's' : ''}
-              </span>
+              <div className="relative group">
+                <span className="flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-red-100 text-red-700 cursor-default">
+                  <AlertTriangle size={12} /> {violationCount} violation{violationCount !== 1 ? 's' : ''}
+                </span>
+                <div className="absolute top-full right-0 mt-1.5 z-50 w-80 bg-white border border-red-200 rounded-xl shadow-xl opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity">
+                  <div className="px-3 py-2 border-b border-red-100 flex items-center gap-2">
+                    <AlertTriangle size={12} className="text-red-500" />
+                    <span className="text-xs font-semibold text-red-700">Schedule Violations</span>
+                  </div>
+                  <div className="max-h-64 overflow-y-auto">
+                    {assignments.filter((a) => a.violation_reason).map((a) => {
+                      const client = clients.find((c) => c.id === a.client_id);
+                      const staffMember = staff.find((s) => s.id === a.staff_id);
+                      return (
+                        <div key={a.id} className="px-3 py-2 border-b border-slate-50 last:border-0">
+                          <div className="flex items-start gap-2">
+                            <div
+                              className="w-2 h-2 rounded-full flex-shrink-0 mt-1"
+                              style={{ backgroundColor: client?.color || '#ef4444' }}
+                            />
+                            <div className="min-w-0">
+                              <div className="text-xs font-semibold text-slate-800 truncate">
+                                {client ? `${client.first_name} ${client.last_name}` : 'Unknown client'}
+                                {staffMember && <span className="font-normal text-slate-500"> · {staffMember.name}</span>}
+                              </div>
+                              <div className="text-[11px] text-slate-500 mt-0.5">{DAY_NAMES[a.day_of_week as DayOfWeek]}</div>
+                              <div className="text-[11px] text-red-600 mt-0.5 leading-snug">{a.violation_reason}</div>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
             )}
             <button
               onClick={() => setShowShiftManager(true)}
@@ -367,8 +390,8 @@ export function SchedulePage() {
         ) : viewMode === 'grid' ? (
           <WeeklyGrid
             assignments={assignments}
-            staff={staff}
-            clients={clients}
+            staff={effectiveStaff}
+            clients={effectiveClients}
             shifts={shiftsForWeek}
             onUpdateAssignment={handleUpdateAssignment}
             onMoveAssignment={handleMoveAssignment}
@@ -381,8 +404,8 @@ export function SchedulePage() {
         ) : viewMode === 'builder' ? (
           <ManualBuilderView
             assignments={assignments}
-            staff={staff}
-            clients={clients}
+            staff={effectiveStaff}
+            clients={effectiveClients}
             shifts={shiftsForWeek}
             breakTimes={breakTimes}
             timeOff={timeOffForWeek}

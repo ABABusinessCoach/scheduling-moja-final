@@ -48,7 +48,7 @@ export function StaffView({ staff, assignments, shifts }: StaffViewProps) {
     <div className="space-y-4">
       {staff
         .filter((s) => s.is_active)
-        .sort((a, b) => a.priority_tier - b.priority_tier)
+        .sort((a, b) => a.priority_tier - b.priority_tier || a.name.localeCompare(b.name))
         .map((s) => {
           const staffAssignments = assignments.filter((a) => a.staff_id === s.id);
           const hours = hoursData.find((h) => h.staffId === s.id);

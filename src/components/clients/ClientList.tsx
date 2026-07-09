@@ -47,8 +47,8 @@ export function ClientList() {
       const row = avail.find((a) => a.day_of_week === d);
       if (!row) return { day: d, label: '–', active: false, full: false };
       const start = row.time_start ? row.time_start.slice(0, 5) : '08:00';
-      const end = row.time_end ? row.time_end.slice(0, 5) : '14:30';
-      const isFull = start === '08:00' && end === '14:30';
+      const end = row.time_end ? row.time_end.slice(0, 5) : '15:30';
+      const isFull = start === '08:00' && (end === '14:30' || end === '15:30');
       return { day: d, label: isFull ? 'ALL' : `${start}–${end}`, active: true, full: isFull };
     });
   }
