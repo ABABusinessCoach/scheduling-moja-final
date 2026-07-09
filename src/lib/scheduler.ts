@@ -183,13 +183,25 @@ export function generateWeeklySchedule(
     return true;
   });
 
-  // Build lookup: staffId/clientId → set of date strings they're off
-  function isOnTimeOff(staffId: string | null, clientId: string | null, dateStr: string): boolean {
+  // Returns true if the person is on time off for the given date (and optionally shift window).
+  // For partial time off (time_start/time_end set), only blocks if windows overlap.
+  function isOnTimeOff(
+    staffId: string | null,
+    clientId: string | null,
+    dateStr: string,
+    shiftStart?: string,
+    shiftEnd?: string
+  ): boolean {
     return timeOff.some((t) => {
       if (staffId && t.staff_id !== staffId) return false;
       if (clientId && t.client_id !== clientId) return false;
       if (!staffId && !clientId) return false;
-      return t.date_start <= dateStr && t.date_end >= dateStr;
+      if (!(t.date_start <= dateStr && t.date_end >= dateStr)) return false;
+      // If time off has a time window, only block if the shift overlaps that window
+      if (t.time_start && t.time_end && shiftStart && shiftEnd) {
+        return shiftStart < t.time_end && shiftEnd > t.time_start;
+      }
+      return true;
     });
   }
 
@@ -235,7 +247,7 @@ export function generateWeeklySchedule(
       const clientsForShift = activeClients.filter((c) => {
         if (!clientCanAttendWindow(c, day, sessionWindow.start, sessionWindow.end)) return false;
         if (!clientPassesSchedulingRules(c, day, shiftName)) return false;
-        if (dateStr && isOnTimeOff(null, c.id, dateStr)) return false;
+        if (dateStr && isOnTimeOff(null, c.id, dateStr, sessionWindow.start, sessionWindow.end)) return false;
         return true;
       });
 
@@ -258,7 +270,7 @@ export function generateWeeklySchedule(
           if (requiresMale && s.gender !== 'male') return false;
           if (isRestricted(s.id, client.id, allRestrictions)) return false;
           if (!staffHasRequiredSkills(s, client)) return false;
-          if (dateStr && isOnTimeOff(s.id, null, dateStr)) return false;
+          if (dateStr && isOnTimeOff(s.id, null, dateStr, sessionWindow.start, sessionWindow.end)) return false;
           return true;
         });
 
@@ -269,7 +281,7 @@ export function generateWeeklySchedule(
             if (client.no_male_therapists && s.gender === 'male') return false;
             if (requiresMale && s.gender !== 'male') return false;
             if (isRestricted(s.id, client.id, allRestrictions)) return false;
-            if (dateStr && isOnTimeOff(s.id, null, dateStr)) return false;
+            if (dateStr && isOnTimeOff(s.id, null, dateStr, sessionWindow.start, sessionWindow.end)) return false;
             return true;
           });
           const skillsMissing = eligibleIgnoringSkills.length > 0 && client.required_skills?.length > 0;

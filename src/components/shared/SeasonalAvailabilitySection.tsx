@@ -5,7 +5,6 @@ import type {
   StaffSeasonalAvailability,
   ClientSeasonalAvailability,
   DayOfWeek,
-  AvailabilityShift,
 } from '../../lib/types';
 import { SEASON_CONFIG, DAY_NAMES, TIME_SLOTS, ALL_END_TIMES, formatTime } from '../../lib/types';
 import { CalendarRange, ChevronDown, ChevronUp, Loader2, Plus, Trash2, CheckCircle2, Clock } from 'lucide-react';
@@ -17,14 +16,6 @@ interface DayWindow {
   enabled: boolean;
   start: string;
   end: string;
-}
-
-function shiftFromWindow(start: string, end: string, day: DayOfWeek): AvailabilityShift {
-  if (day === 6) return end <= '12:00' ? 'SAT_AM' : 'SAT_PM';
-  if (start >= '15:00') return 'EVE';
-  if (start === '08:00' && end === '18:00') return 'FULL';
-  if (end <= '10:30') return 'AM';
-  return 'PM';
 }
 
 const DEFAULT_WINDOWS: DayWindow[] = ([1, 2, 3, 4, 5] as DayOfWeek[]).map(d => ({
@@ -95,7 +86,6 @@ export function SeasonalAvailabilitySection({ entityId, entityType }: SeasonalAv
           time_start: w.start,
           time_end: w.end,
           is_available: true,
-          shift: shiftFromWindow(w.start, w.end, w.day),
         }));
 
       if (toInsert.length > 0) {
@@ -132,7 +122,7 @@ export function SeasonalAvailabilitySection({ entityId, entityType }: SeasonalAv
     <div className="space-y-2">
       {periods.map(period => {
         const cfg = SEASON_CONFIG[period.period_type];
-        const rows = rowsByPeriod[period.period_id] ?? rowsByPeriod[period.id] ?? [];
+        const rows = rowsByPeriod[period.id] ?? [];
         const hasOverride = rows.length > 0;
         const isOpen = expanded === period.id;
         const currentlyActive = isCurrentlyActive(period);

@@ -380,6 +380,8 @@ export interface TimeOff {
   client_id: string | null;
   date_start: string;
   date_end: string;
+  time_start: string | null; // HH:MM — null means all day
+  time_end: string | null;   // HH:MM — null means all day
   reason: string;
   created_at: string;
 }
