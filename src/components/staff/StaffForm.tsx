@@ -20,8 +20,9 @@ import {
   RULE_PRESETS,
   formatTime,
 } from '../../lib/types';
-import { X, Plus, ShieldAlert } from 'lucide-react';
+import { X, Plus, ShieldAlert, Sun } from 'lucide-react';
 import { TimeOffManager } from '../shared/TimeOffManager';
+import { SeasonalAvailabilitySection } from '../shared/SeasonalAvailabilitySection';
 
 interface StaffFormProps {
   staff?: Staff | null;
@@ -294,7 +295,8 @@ export function StaffForm({ staff, onSave, onCancel }: StaffFormProps) {
               <select className="form-input" value={gender} onChange={(e) => setGender(e.target.value as Gender)}>
                 <option value="female">Female</option>
                 <option value="male">Male</option>
-                <option value="other">Other</option>
+                <option value="non-binary">Non-binary</option>
+                <option value="other">Other / Prefer not to say</option>
               </select>
             </div>
             <div>
@@ -600,6 +602,17 @@ export function StaffForm({ staff, onSave, onCancel }: StaffFormProps) {
                   );
                 })}
               </div>
+            </div>
+          )}
+
+          {/* ── Seasonal Availability ── */}
+          {isEdit && staff && (
+            <div className="border border-slate-200 rounded-xl p-4">
+              <div className="flex items-center gap-2 mb-3">
+                <Sun size={15} className="text-amber-500" />
+                <label className="text-sm font-semibold text-slate-700">Seasonal Availability</label>
+              </div>
+              <SeasonalAvailabilitySection entityId={staff.id} entityType="staff" />
             </div>
           )}
 

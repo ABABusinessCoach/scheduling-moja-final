@@ -25,6 +25,7 @@ import { clientCanStillAttend } from '../../lib/scheduler';
 import { getMonday, format } from '../../lib/dateUtils';
 import { X, Plus, Trash2, ShieldAlert, Sun, Moon } from 'lucide-react';
 import { TimeOffManager } from '../shared/TimeOffManager';
+import { SeasonalAvailabilitySection } from '../shared/SeasonalAvailabilitySection';
 
 interface ClientFormProps {
   client?: Client | null;
@@ -873,6 +874,17 @@ export function ClientForm({ client, onSave, onCancel }: ClientFormProps) {
               <p className="text-xs text-slate-400 mt-1">Scheduler will not place this client before this date.</p>
             </div>
           </div>
+
+          {/* Seasonal Availability */}
+          {isEdit && client && (
+            <div className="border border-slate-200 rounded-xl p-4">
+              <div className="flex items-center gap-2 mb-3">
+                <Sun size={15} className="text-amber-500" />
+                <label className="text-sm font-semibold text-slate-700">Seasonal Availability</label>
+              </div>
+              <SeasonalAvailabilitySection entityId={client.id} entityType="client" />
+            </div>
+          )}
 
           {/* Time Off */}
           {isEdit && client && (

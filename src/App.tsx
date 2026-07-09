@@ -7,10 +7,15 @@ import { DashboardPage } from './pages/DashboardPage';
 import { SchedulePage } from './pages/SchedulePage';
 import { CancellationPage } from './pages/CancellationPage';
 import { ClinicCalendarPage } from './pages/ClinicCalendarPage';
+import { AcceptShiftPage } from './pages/AcceptShiftPage';
+import { SeasonalPeriodsPage } from './pages/SeasonalPeriodsPage';
 import { StaffList } from './components/staff/StaffList';
 import { ClientList } from './components/clients/ClientList';
 import { Sidebar } from './components/layout/Sidebar';
 import { ScheduleAssistant } from './components/schedule/ScheduleAssistant';
+
+// If ?accept=TOKEN is in the URL, render the public accept page (no auth needed)
+const acceptToken = new URLSearchParams(window.location.search).get('accept');
 
 function GlobalScheduleAssistant() {
   const { assignments, staff, clients, weekLabel, handleUpdateAssignment } = useSchedule();
@@ -36,6 +41,7 @@ function AppLayout() {
       case 'clients': return <ClientList />;
       case 'cancellations': return <CancellationPage />;
       case 'clinic-calendar': return <ClinicCalendarPage />;
+      case 'seasons': return <SeasonalPeriodsPage />;
       default: return <DashboardPage onNavigate={setCurrentPage} />;
     }
   }
@@ -48,7 +54,6 @@ function AppLayout() {
           {renderPage()}
         </div>
       </main>
-
       <GlobalScheduleAssistant />
     </div>
   );
@@ -68,9 +73,7 @@ function AppInner() {
     );
   }
 
-  if (!user) {
-    return <LoginPage />;
-  }
+  if (!user) return <LoginPage />;
 
   return (
     <ScheduleProvider>
@@ -80,6 +83,8 @@ function AppInner() {
 }
 
 function App() {
+  if (acceptToken) return <AcceptShiftPage token={acceptToken} />;
+
   return (
     <AuthProvider>
       <ToastProvider>

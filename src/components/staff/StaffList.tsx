@@ -128,7 +128,7 @@ export function StaffList() {
               <span className="px-2 py-0.5 rounded-full bg-slate-100 text-slate-500 text-xs">Inactive</span>
             )}
             <span className="text-xs text-slate-400 capitalize">{s.employment_type}</span>
-            <span className="text-xs text-slate-400">{s.gender}</span>
+            <GenderBadge gender={s.gender} />
             <span className="text-xs text-slate-500 font-medium">{s.weekly_hour_goal}h/week goal</span>
           </div>
 
@@ -347,6 +347,22 @@ export function StaffList() {
         />
       )}
     </div>
+  );
+}
+
+const GENDER_LABELS: Record<string, { label: string; classes: string }> = {
+  female:      { label: 'Female',     classes: 'bg-pink-50 text-pink-700 border-pink-200' },
+  male:        { label: 'Male',       classes: 'bg-blue-50 text-blue-700 border-blue-200' },
+  'non-binary': { label: 'Non-binary', classes: 'bg-violet-50 text-violet-700 border-violet-200' },
+  other:       { label: 'Other',      classes: 'bg-slate-100 text-slate-500 border-slate-200' },
+};
+
+function GenderBadge({ gender }: { gender: string }) {
+  const config = GENDER_LABELS[gender] ?? { label: gender, classes: 'bg-slate-100 text-slate-500 border-slate-200' };
+  return (
+    <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold border ${config.classes}`}>
+      {config.label}
+    </span>
   );
 }
 

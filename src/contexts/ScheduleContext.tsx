@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
+import React, { createContext, useContext, useEffect, useState, useCallback, useMemo } from 'react';
 import { supabase } from '../lib/supabase';
 import type {
   Schedule,
@@ -13,6 +13,9 @@ import type {
   ShiftDefinition,
   BreakTime,
   TimeOff,
+  SeasonalPeriod,
+  StaffSeasonalAvailability,
+  ClientSeasonalAvailability,
 } from '../lib/types';
 import { computeRatioAlerts } from '../lib/scheduler';
 import { SHIFT_TIMES } from '../lib/types';
@@ -24,6 +27,9 @@ interface ScheduleContextType {
   weekLabel: string;
   staff: Staff[];
   clients: Client[];
+  effectiveStaff: Staff[];
+  effectiveClients: Client[];
+  activeSeason: SeasonalPeriod | null;
   allRestrictions: StaffClientRestriction[];
   schedule: Schedule | null;
   assignments: ScheduleAssignment[];
@@ -37,6 +43,7 @@ interface ScheduleContextType {
   refreshSchedule: () => Promise<void>;
   refreshShiftsAndBreaks: () => Promise<void>;
   refreshTimeOff: () => Promise<void>;
+  refreshSeasonalData: () => Promise<void>;
   setScheduleData: (s: Schedule | null) => void;
   handleUpdateAssignment: (assignmentId: string, staffId: string | null) => Promise<void>;
   handleInsertAssignment: (day: DayOfWeek, shift: AssignmentShift, clientId: string, staffId: string, timeStart?: string, timeEnd?: string) => Promise<void>;
@@ -62,6 +69,77 @@ export function ScheduleProvider({ children }: { children: React.ReactNode }) {
   const [timeOffForWeek, setTimeOffForWeek] = useState<TimeOff[]>([]);
   const [loading, setLoading] = useState(true);
 
+  // Seasonal data
+  const [seasonalPeriods, setSeasonalPeriods] = useState<SeasonalPeriod[]>([]);
+  const [staffSeasonalAvail, setStaffSeasonalAvail] = useState<StaffSeasonalAvailability[]>([]);
+  const [clientSeasonalAvail, setClientSeasonalAvail] = useState<ClientSeasonalAvailability[]>([]);
+
+  // The season whose date range contains currentMonday
+  const activeSeason = useMemo<SeasonalPeriod | null>(() => {
+    const weekStr = format(currentMonday, 'yyyy-MM-dd');
+    return seasonalPeriods.find(p => p.is_active && weekStr >= p.date_start && weekStr <= p.date_end) ?? null;
+  }, [seasonalPeriods, currentMonday]);
+
+  // Staff with seasonal availability substituted in when in season
+  const effectiveStaff = useMemo<Staff[]>(() => {
+    if (!activeSeason) return staff;
+    return staff.map(s => {
+      const overrides = staffSeasonalAvail.filter(r => r.staff_id === s.id && r.period_id === activeSeason.id);
+      if (!overrides.length) return s;
+      const base = s.availability ?? [];
+      // Replace existing availability days with seasonal overrides; keep days not overridden
+      const merged = base.map(a => {
+        const ov = overrides.find(r => r.day_of_week === a.day_of_week);
+        if (!ov) return a;
+        if (!ov.is_available) return null;
+        return { ...a, time_start: ov.time_start, time_end: ov.time_end };
+      }).filter(Boolean) as typeof base;
+      // Add days that only exist in seasonal (not in regular)
+      for (const ov of overrides) {
+        if (ov.is_available && !base.find(a => a.day_of_week === ov.day_of_week)) {
+          merged.push({
+            id: `seasonal_${ov.id}`,
+            staff_id: s.id,
+            day_of_week: ov.day_of_week as DayOfWeek,
+            shift: 'FULL',
+            time_start: ov.time_start,
+            time_end: ov.time_end,
+          });
+        }
+      }
+      return { ...s, availability: merged };
+    });
+  }, [staff, activeSeason, staffSeasonalAvail]);
+
+  // Clients with seasonal availability substituted in when in season
+  const effectiveClients = useMemo<Client[]>(() => {
+    if (!activeSeason) return clients;
+    return clients.map(c => {
+      const overrides = clientSeasonalAvail.filter(r => r.client_id === c.id && r.period_id === activeSeason.id);
+      if (!overrides.length) return c;
+      const base = c.availability ?? [];
+      const merged = base.map(a => {
+        const ov = overrides.find(r => r.day_of_week === a.day_of_week);
+        if (!ov) return a;
+        if (!ov.is_available) return null;
+        return { ...a, time_start: ov.time_start, time_end: ov.time_end };
+      }).filter(Boolean) as typeof base;
+      for (const ov of overrides) {
+        if (ov.is_available && !base.find(a => a.day_of_week === ov.day_of_week)) {
+          merged.push({
+            id: `seasonal_${ov.id}`,
+            client_id: c.id,
+            day_of_week: ov.day_of_week as DayOfWeek,
+            shift: 'FULL',
+            time_start: ov.time_start,
+            time_end: ov.time_end,
+          });
+        }
+      }
+      return { ...c, availability: merged };
+    });
+  }, [clients, activeSeason, clientSeasonalAvail]);
+
   useEffect(() => { loadBaseData(); }, []);
   useEffect(() => { loadSchedule(); }, [currentMonday]);
   useEffect(() => { loadTimeOff(); }, [currentMonday]);
@@ -73,7 +151,7 @@ export function ScheduleProvider({ children }: { children: React.ReactNode }) {
   }, [staff, clients, allRestrictions, shifts]);
 
   async function loadBaseData() {
-    const [staffRes, clientRes, restrictRes, shiftsRes, breaksRes] = await Promise.all([
+    const [staffRes, clientRes, restrictRes, shiftsRes, breaksRes, seasonPeriodsRes, staffSeasonRes, clientSeasonRes] = await Promise.all([
       supabase
         .from('staff')
         .select('*, staff_availability(*)')
@@ -88,6 +166,9 @@ export function ScheduleProvider({ children }: { children: React.ReactNode }) {
       supabase.from('staff_client_restrictions').select('*'),
       supabase.from('shifts').select('*').order('time_start').order('sort_order'),
       supabase.from('break_times').select('*').order('sort_order'),
+      supabase.from('seasonal_periods').select('*').eq('is_active', true).order('date_start'),
+      supabase.from('staff_seasonal_availability').select('*'),
+      supabase.from('client_seasonal_availability').select('*'),
     ]);
     setStaff(
       (staffRes.data ?? []).map((s: any) => ({ ...s, availability: s.staff_availability }))
@@ -102,6 +183,20 @@ export function ScheduleProvider({ children }: { children: React.ReactNode }) {
     setAllRestrictions(restrictRes.data ?? []);
     setShifts(shiftsRes.data ?? []);
     setBreakTimes(breaksRes.data ?? []);
+    setSeasonalPeriods(seasonPeriodsRes.data ?? []);
+    setStaffSeasonalAvail(staffSeasonRes.data ?? []);
+    setClientSeasonalAvail(clientSeasonRes.data ?? []);
+  }
+
+  async function refreshSeasonalData() {
+    const [periodsRes, staffSeasonRes, clientSeasonRes] = await Promise.all([
+      supabase.from('seasonal_periods').select('*').eq('is_active', true).order('date_start'),
+      supabase.from('staff_seasonal_availability').select('*'),
+      supabase.from('client_seasonal_availability').select('*'),
+    ]);
+    setSeasonalPeriods(periodsRes.data ?? []);
+    setStaffSeasonalAvail(staffSeasonRes.data ?? []);
+    setClientSeasonalAvail(clientSeasonRes.data ?? []);
   }
 
   const loadSchedule = useCallback(async () => {
@@ -296,6 +391,10 @@ export function ScheduleProvider({ children }: { children: React.ReactNode }) {
         refreshSchedule: loadSchedule,
         refreshShiftsAndBreaks,
         refreshTimeOff,
+        refreshSeasonalData,
+        effectiveStaff,
+        effectiveClients,
+        activeSeason,
         setScheduleData: setSchedule,
         handleUpdateAssignment,
         handleInsertAssignment,

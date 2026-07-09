@@ -16,6 +16,7 @@ import { GapFillerModal } from '../components/schedule/GapFillerModal';
 import { SendScheduleModal } from '../components/schedule/SendScheduleModal';
 import { ManualBuilderView } from '../components/schedule/ManualBuilderView';
 import { useToast } from '../lib/toast';
+import { ShiftOffersView } from '../components/schedule/ShiftOffersView';
 import {
   ChevronLeft,
   ChevronRight,
@@ -33,9 +34,11 @@ import {
   Hammer,
   RotateCcw,
   Send,
+  Bell,
+  Sun,
 } from 'lucide-react';
 
-type ViewMode = 'timeline' | 'daily' | 'grid' | 'staff' | 'client' | 'builder';
+type ViewMode = 'timeline' | 'daily' | 'grid' | 'staff' | 'client' | 'builder' | 'offers';
 
 export function SchedulePage() {
   const {
@@ -44,6 +47,9 @@ export function SchedulePage() {
     weekLabel,
     staff,
     clients,
+    effectiveStaff,
+    effectiveClients,
+    activeSeason,
     allRestrictions,
     schedule,
     assignments,
@@ -112,8 +118,8 @@ export function SchedulePage() {
 
       const generated = generateWeeklySchedule(
         scheduleId,
-        staff,
-        clients,
+        effectiveStaff,
+        effectiveClients,
         allRestrictions,
         1,
         weekStr,
@@ -176,12 +182,13 @@ export function SchedulePage() {
     { id: 'staff',    icon: <Users size={14} />, label: 'By Staff' },
     { id: 'client',   icon: <UserRound size={14} />, label: 'By Client' },
     { id: 'builder',  icon: <Hammer size={14} />, label: 'Builder' },
+    { id: 'offers',   icon: <Bell size={14} />, label: 'Offers', badge: unassignedCount > 0 ? unassignedCount : undefined },
   ];
 
   const sharedProps = {
     assignments,
-    staff,
-    clients,
+    staff: effectiveStaff,
+    clients: effectiveClients,
     sessionNotes,
     onUpdateAssignment: handleUpdateAssignment,
     onMoveAssignment: handleMoveAssignment,
@@ -193,6 +200,14 @@ export function SchedulePage() {
   return (
     <div className="flex gap-5 h-full">
       <div className="flex-1 min-w-0">
+        {/* Season banner */}
+        {activeSeason && (
+          <div className="flex items-center gap-2 px-3 py-2 mb-3 rounded-xl text-sm font-medium bg-amber-50 border border-amber-200 text-amber-800">
+            <Sun size={14} className="text-amber-500 flex-shrink-0" />
+            <span><strong>{activeSeason.name}</strong> is active — seasonal availability overrides are applied.</span>
+          </div>
+        )}
+
         {/* Week nav */}
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-2">
@@ -310,11 +325,16 @@ export function SchedulePage() {
             <button
               key={tab.id}
               onClick={() => setViewMode(tab.id as ViewMode)}
-              className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+              className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium transition-colors relative ${
                 viewMode === tab.id ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'
               }`}
             >
               {tab.icon} {tab.label}
+              {'badge' in tab && tab.badge ? (
+                <span className="ml-0.5 px-1.5 py-0.5 text-[10px] bg-amber-500 text-white rounded-full font-bold leading-none">
+                  {tab.badge}
+                </span>
+              ) : null}
             </button>
           ))}
         </div>
@@ -371,8 +391,15 @@ export function SchedulePage() {
             onDelete={handleDeleteAssignment}
             onUpdateStaff={handleUpdateAssignment}
           />
+        ) : viewMode === 'offers' ? (
+          <ShiftOffersView
+            assignments={assignments}
+            staff={effectiveStaff}
+            clients={effectiveClients}
+            scheduleId={schedule.id}
+          />
         ) : (
-          <ClientView clients={clients} assignments={assignments} shifts={shiftsForWeek} />
+          <ClientView clients={effectiveClients} assignments={assignments} shifts={shiftsForWeek} />
         )}
       </div>
 

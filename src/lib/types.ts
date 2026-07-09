@@ -1,5 +1,5 @@
 export type EmploymentType = 'full-time' | 'part-time' | 'contractor';
-export type Gender = 'male' | 'female' | 'other';
+export type Gender = 'male' | 'female' | 'non-binary' | 'other';
 export type PriorityTier = 1 | 2 | 3;
 export type ProgramType = 'daytime' | 'afterschool' | 'both';
 export type ShiftType = 'AM' | 'PM' | 'FULL' | 'CUSTOM';
@@ -391,3 +391,42 @@ export interface ClinicClosure {
   notes: string;
   created_at: string;
 }
+
+export type SeasonPeriodType = 'summer' | 'winter_break' | 'spring_break' | 'custom';
+
+export interface SeasonalPeriod {
+  id: string;
+  name: string;
+  period_type: SeasonPeriodType;
+  date_start: string; // YYYY-MM-DD
+  date_end: string;   // YYYY-MM-DD
+  is_active: boolean;
+  created_at: string;
+}
+
+export interface StaffSeasonalAvailability {
+  id: string;
+  staff_id: string;
+  period_id: string;
+  day_of_week: DayOfWeek;
+  time_start: string;
+  time_end: string;
+  is_available: boolean;
+}
+
+export interface ClientSeasonalAvailability {
+  id: string;
+  client_id: string;
+  period_id: string;
+  day_of_week: DayOfWeek;
+  time_start: string;
+  time_end: string;
+  is_available: boolean;
+}
+
+export const SEASON_CONFIG: Record<SeasonPeriodType, { label: string; badge: string; icon: string }> = {
+  summer:       { label: 'Summer',       badge: 'bg-amber-100 text-amber-800 border-amber-200',  icon: '☀️' },
+  winter_break: { label: 'Winter Break', badge: 'bg-blue-100 text-blue-800 border-blue-200',     icon: '❄️' },
+  spring_break: { label: 'Spring Break', badge: 'bg-green-100 text-green-800 border-green-200',  icon: '🌱' },
+  custom:       { label: 'Custom',       badge: 'bg-slate-100 text-slate-700 border-slate-200',  icon: '📅' },
+};
