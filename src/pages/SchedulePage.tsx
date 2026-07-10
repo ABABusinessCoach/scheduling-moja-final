@@ -14,6 +14,7 @@ import { SupervisionTracker } from '../components/schedule/SupervisionTracker';
 import { ShiftManager } from '../components/schedule/ShiftManager';
 import { GapFillerModal } from '../components/schedule/GapFillerModal';
 import { SendScheduleModal } from '../components/schedule/SendScheduleModal';
+import { StaffScheduleSummary } from '../components/schedule/StaffScheduleSummary';
 import { ManualBuilderView } from '../components/schedule/ManualBuilderView';
 import { useToast } from '../lib/toast';
 import { ShiftOffersView } from '../components/schedule/ShiftOffersView';
@@ -35,6 +36,7 @@ import {
   RotateCcw,
   Send,
   Bell,
+  Save,
 } from 'lucide-react';
 
 type ViewMode = 'timeline' | 'daily' | 'grid' | 'staff' | 'client' | 'builder' | 'offers';
@@ -77,7 +79,19 @@ export function SchedulePage() {
   const [showShiftManager, setShowShiftManager] = useState(false);
   const [startingOver, setStartingOver] = useState(false);
   const [showSendModal, setShowSendModal] = useState(false);
+  const [showSummary, setShowSummary] = useState(false);
+  const [saving, setSaving] = useState(false);
   const showToast = useToast();
+
+  async function saveAndSync() {
+    setSaving(true);
+    try {
+      await refreshSchedule();
+      showToast('Schedule saved and synced.');
+    } finally {
+      setSaving(false);
+    }
+  }
 
   async function generateSchedule() {
     if (staff.length === 0 || clients.length === 0) {
@@ -197,7 +211,7 @@ export function SchedulePage() {
   };
 
   return (
-    <div className="flex gap-5 h-full">
+    <div className={`flex gap-5 h-full ${viewMode === 'builder' ? '' : ''}`}>
       <div className="flex-1 min-w-0">
         {/* Week nav */}
         <div className="flex items-center justify-between mb-4">
@@ -290,6 +304,14 @@ export function SchedulePage() {
                 className="flex items-center gap-1.5 px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-xl text-sm font-semibold transition-colors"
               >
                 <Send size={15} /> Send
+              </button>
+            )}
+            {schedule && (
+              <button
+                onClick={() => setShowSummary(true)}
+                className="flex items-center gap-1.5 px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-xl text-sm font-semibold transition-colors"
+              >
+                <FileText size={15} /> Summary
               </button>
             )}
             {schedule && (
@@ -402,18 +424,49 @@ export function SchedulePage() {
         ) : viewMode === 'staff' ? (
           <StaffView staff={staff} assignments={assignments} shifts={shiftsForWeek} />
         ) : viewMode === 'builder' ? (
-          <ManualBuilderView
-            assignments={assignments}
-            staff={effectiveStaff}
-            clients={effectiveClients}
-            shifts={shiftsForWeek}
-            breakTimes={breakTimes}
-            timeOff={timeOffForWeek}
-            currentMonday={currentMonday}
-            onInsert={handleInsertAssignment}
-            onDelete={handleDeleteAssignment}
-            onUpdateStaff={handleUpdateAssignment}
-          />
+          <>
+            {/* Builder toolbar: active shifts strip + save button */}
+            <div className="flex items-center justify-between mb-3 gap-4">
+              {shiftsForWeek.length > 0 && (
+                <div className="flex items-center gap-3 flex-wrap">
+                  <span className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Active Shifts</span>
+                  {shiftsForWeek.map((s) => (
+                    <div key={s.id} className="flex items-center gap-1.5 px-2.5 py-1 bg-white border border-slate-200 rounded-lg text-xs">
+                      <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: s.color }} />
+                      <span className="font-medium text-slate-700">{s.label}</span>
+                      <span className="text-slate-400">{s.time_start.slice(0, 5)}–{s.time_end.slice(0, 5)}</span>
+                    </div>
+                  ))}
+                  <button
+                    onClick={() => setShowShiftManager(true)}
+                    className="text-xs text-slate-400 hover:text-slate-600 transition-colors"
+                  >
+                    Edit shifts
+                  </button>
+                </div>
+              )}
+              <button
+                onClick={saveAndSync}
+                disabled={saving}
+                className="flex items-center gap-1.5 px-4 py-2 bg-aqua-500 hover:bg-aqua-600 text-white rounded-xl text-sm font-semibold transition-colors disabled:opacity-60 ml-auto flex-shrink-0"
+              >
+                <Save size={14} />
+                {saving ? 'Saving…' : 'Save'}
+              </button>
+            </div>
+            <ManualBuilderView
+              assignments={assignments}
+              staff={effectiveStaff}
+              clients={effectiveClients}
+              shifts={shiftsForWeek}
+              breakTimes={breakTimes}
+              timeOff={timeOffForWeek}
+              currentMonday={currentMonday}
+              onInsert={handleInsertAssignment}
+              onDelete={handleDeleteAssignment}
+              onUpdateStaff={handleUpdateAssignment}
+            />
+          </>
         ) : viewMode === 'offers' ? (
           <ShiftOffersView
             assignments={assignments}
@@ -426,7 +479,8 @@ export function SchedulePage() {
         )}
       </div>
 
-      {/* Sidebar */}
+      {/* Sidebar — hidden in builder mode so schedule stretches full width */}
+      {viewMode !== 'builder' && (
       <div className="w-56 flex-shrink-0 space-y-4">
         <SupervisionTracker staff={staff} />
 
@@ -483,6 +537,7 @@ export function SchedulePage() {
           </div>
         )}
       </div>
+      )}
 
       {showShiftManager && (
         <ShiftManager
@@ -513,6 +568,15 @@ export function SchedulePage() {
           weekStart={format(currentMonday, 'yyyy-MM-dd')}
           staff={staff}
           onClose={() => setShowSendModal(false)}
+        />
+      )}
+
+      {showSummary && (
+        <StaffScheduleSummary
+          weekLabel={weekLabel}
+          assignments={assignments}
+          staff={staff}
+          onClose={() => setShowSummary(false)}
         />
       )}
     </div>

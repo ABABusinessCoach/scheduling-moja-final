@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useState, useCallback, useMemo } from 'react';
+import React, { createContext, useContext, useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { supabase } from '../lib/supabase';
 import type {
   Schedule,
@@ -68,6 +68,7 @@ export function ScheduleProvider({ children }: { children: React.ReactNode }) {
   const [breakTimes, setBreakTimes] = useState<BreakTime[]>([]);
   const [timeOffForWeek, setTimeOffForWeek] = useState<TimeOff[]>([]);
   const [loading, setLoading] = useState(true);
+  const scheduleRef = useRef<Schedule | null>(null);
 
   // Seasonal data
   const [seasonalPeriods, setSeasonalPeriods] = useState<SeasonalPeriod[]>([]);
@@ -236,6 +237,7 @@ export function ScheduleProvider({ children }: { children: React.ReactNode }) {
 
     if (sched) {
       setSchedule(sched);
+      scheduleRef.current = sched;
       const { data: assignData } = await supabase
         .from('schedule_assignments')
         .select('*, staff(*,staff_availability(*)), client:clients(*,client_attendance(*),client_availability(*))')
@@ -251,6 +253,7 @@ export function ScheduleProvider({ children }: { children: React.ReactNode }) {
       await loadSessionNotes(loaded.map((a: ScheduleAssignment) => a.id));
     } else {
       setSchedule(null);
+      scheduleRef.current = null;
       setAssignments([]);
       setSessionNotes([]);
     }
@@ -264,6 +267,26 @@ export function ScheduleProvider({ children }: { children: React.ReactNode }) {
       .select('*')
       .in('assignment_id', assignmentIds);
     setSessionNotes(data ?? []);
+  }
+
+  // Re-fetches assignments from DB without triggering the loading spinner.
+  // Called after every manual mutation so all views immediately see DB truth.
+  async function silentReloadAssignments() {
+    const sched = scheduleRef.current;
+    if (!sched) return;
+    const { data: assignData } = await supabase
+      .from('schedule_assignments')
+      .select('*, staff(*,staff_availability(*)), client:clients(*,client_attendance(*),client_availability(*))')
+      .eq('schedule_id', sched.id);
+    const loaded = (assignData ?? []).map((a: any) => ({
+      ...a,
+      staff: a.staff ? { ...a.staff, availability: a.staff.staff_availability } : undefined,
+      client: a.client
+        ? { ...a.client, availability: a.client.client_availability, attendance: a.client.client_attendance }
+        : undefined,
+    }));
+    setAssignments(loaded);
+    await loadSessionNotes(loaded.map((a: ScheduleAssignment) => a.id));
   }
 
   async function refreshShiftsAndBreaks() {
@@ -297,20 +320,17 @@ export function ScheduleProvider({ children }: { children: React.ReactNode }) {
       .from('schedule_assignments')
       .update({ staff_id: staffId, is_manual_override: true, violation_reason: null })
       .eq('id', assignmentId);
-    setAssignments((prev) =>
-      prev.map((a) =>
-        a.id === assignmentId ? { ...a, staff_id: staffId, is_manual_override: true, violation_reason: null } : a
-      )
-    );
+    await silentReloadAssignments();
   }
 
   async function handleInsertAssignment(day: DayOfWeek, shift: AssignmentShift, clientId: string, staffId: string, timeStart?: string, timeEnd?: string) {
-    if (!schedule) return;
+    const sched = scheduleRef.current;
+    if (!sched) return;
     const times = SHIFT_TIMES[shift];
-    const { data, error } = await supabase
+    const { error } = await supabase
       .from('schedule_assignments')
       .insert({
-        schedule_id: schedule.id,
+        schedule_id: sched.id,
         day_of_week: day,
         shift,
         time_start: timeStart ?? times?.start,
@@ -319,23 +339,12 @@ export function ScheduleProvider({ children }: { children: React.ReactNode }) {
         client_id: clientId,
         is_manual_override: true,
         violation_reason: null,
-      })
-      .select('*, staff(*,staff_availability(*)), client:clients(*,client_attendance(*),client_availability(*))')
-      .single();
+      });
     if (error) {
       console.error('Insert assignment error:', error);
       return;
     }
-    if (data) {
-      const mapped = {
-        ...data,
-        staff: data.staff ? { ...data.staff, availability: data.staff.staff_availability } : undefined,
-        client: data.client
-          ? { ...data.client, availability: data.client.client_availability, attendance: data.client.client_attendance }
-          : undefined,
-      };
-      setAssignments((prev) => [...prev, mapped]);
-    }
+    await silentReloadAssignments();
   }
 
   async function handleMoveAssignment(assignmentId: string, newDay: DayOfWeek, newShift: AssignmentShift) {
@@ -343,13 +352,12 @@ export function ScheduleProvider({ children }: { children: React.ReactNode }) {
       .from('schedule_assignments')
       .update({ day_of_week: newDay, shift: newShift, is_manual_override: true, violation_reason: null })
       .eq('id', assignmentId);
-    await loadSchedule();
+    await silentReloadAssignments();
   }
 
   async function handleDeleteAssignment(assignmentId: string) {
     await supabase.from('schedule_assignments').delete().eq('id', assignmentId);
-    setAssignments((prev) => prev.filter((a) => a.id !== assignmentId));
-    setSessionNotes((prev) => prev.filter((n) => n.assignment_id !== assignmentId));
+    await silentReloadAssignments();
   }
 
   async function handleUpdateEndTime(assignmentId: string, newEndTime: string) {
@@ -357,9 +365,7 @@ export function ScheduleProvider({ children }: { children: React.ReactNode }) {
       .from('schedule_assignments')
       .update({ time_end: newEndTime, is_manual_override: true })
       .eq('id', assignmentId);
-    setAssignments((prev) =>
-      prev.map((a) => (a.id === assignmentId ? { ...a, time_end: newEndTime, is_manual_override: true } : a))
-    );
+    await silentReloadAssignments();
   }
 
   async function handleToggleNote(assignmentId: string) {

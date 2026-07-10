@@ -281,6 +281,11 @@ export function generateWeeklySchedule(
     if (!bookedSlots.has(key)) bookedSlots.set(key, new Set());
     bookedSlots.get(key)!.add(staffId);
   }
+  function getStaffDaySessions(staffId: string, day: DayOfWeek): number {
+    return (assignments as ScheduleAssignment[]).filter(
+      (a) => a.staff_id === staffId && a.day_of_week === day
+    ).length;
+  }
 
   // Use provided DB shifts; fall back to session-block defaults based on season
   const shiftsToUse: ShiftDefinition[] = weekShifts.length > 0 ? weekShifts : buildFallbackShifts(!!activeSeason);
@@ -300,14 +305,35 @@ export function generateWeeklySchedule(
         return true;
       });
 
+      // Sort clients by how constrained they are (fewest eligible staff first).
+      // This ensures clients with limited options get assigned before clients
+      // with many options, reducing unassigned gaps.
+      const clientEligibilityCounts = new Map<string, number>();
       for (const client of clientsForShift) {
-        const rampTarget = getRampUpTarget(client.ramp_up_schedule, weekNumber);
-        const authCap = client.authorized_hours_per_week;
-        const effectiveCap = rampTarget !== null ? Math.min(rampTarget, authCap ?? Infinity) : authCap;
-        if (effectiveCap !== null && effectiveCap !== undefined) {
-          const alreadyScheduled = getClientHoursInBatch(client.id, assignments);
-          const sessionHours = slotDuration(sessionWindow.start, sessionWindow.end);
-          if (alreadyScheduled + sessionHours > effectiveCap) continue;
+        const count = activeStaff.filter((s) => {
+          if (!staffCanWorkWindow(s, day, sessionWindow.start, sessionWindow.end)) return false;
+          if (client.no_male_therapists && s.gender === 'male') return false;
+          if (clientRequiresMale(client) && s.gender !== 'male') return false;
+          if (isRestricted(s.id, client.id, allRestrictions)) return false;
+          if (!staffHasRequiredSkills(s, client)) return false;
+          if (dateStr && isOnTimeOff(s.id, null, dateStr, sessionWindow.start, sessionWindow.end)) return false;
+          return true;
+        }).length;
+        clientEligibilityCounts.set(client.id, count);
+      }
+      clientsForShift.sort((a, b) => (clientEligibilityCounts.get(a.id) ?? 0) - (clientEligibilityCounts.get(b.id) ?? 0));
+
+      for (const client of clientsForShift) {
+        if (!activeSeason) {
+          const rampTarget = getRampUpTarget(client.ramp_up_schedule, weekNumber);
+          const authCap = client.authorized_hours_per_week != null ? Number(client.authorized_hours_per_week) : null;
+          const effectiveCap = rampTarget !== null ? Math.min(rampTarget, authCap ?? Infinity) : authCap;
+          if (effectiveCap != null && !isNaN(effectiveCap)) {
+            const alreadyScheduled = getClientHoursInBatch(client.id, assignments);
+            if (alreadyScheduled >= effectiveCap) continue;
+            const sessionHours = slotDuration(sessionWindow.start, sessionWindow.end);
+            if (alreadyScheduled + sessionHours > effectiveCap) continue;
+          }
         }
 
         const requiresMale = clientRequiresMale(client);
@@ -353,11 +379,39 @@ export function generateWeeklySchedule(
         }
 
         const sorted = [...eligible].sort((a, b) => {
+          // Last-resort staff (tier 4) always go last
+          const aLastResort = a.priority_tier >= 4 ? 1 : 0;
+          const bLastResort = b.priority_tier >= 4 ? 1 : 0;
+          if (aLastResort !== bLastResort) return aLastResort - bLastResort;
+
+          // Strongly prefer staff with zero sessions on this day (fill empty days)
+          const aDaySessions = getStaffDaySessions(a.id, day);
+          const bDaySessions = getStaffDaySessions(b.id, day);
+          if (aDaySessions === 0 && bDaySessions > 0) return -1;
+          if (bDaySessions === 0 && aDaySessions > 0) return 1;
+
+          // Compute how full each staff member is relative to their goal (0 = empty, 1 = at goal)
+          const aHours = getStaffHoursInBatch(a.id, assignments);
+          const bHours = getStaffHoursInBatch(b.id, assignments);
+          const aGoal = Number(a.weekly_hour_goal) || 1;
+          const bGoal = Number(b.weekly_hour_goal) || 1;
+          const aLoad = aHours / aGoal;
+          const bLoad = bHours / bGoal;
+
+          // Primary: prefer staff who are most under their hour goal (lowest load ratio)
+          const loadDiff = aLoad - bLoad;
+          if (Math.abs(loadDiff) > 0.05) return loadDiff < 0 ? -1 : 1;
+
+          // Secondary: tier (prefer lower tier when load is similar)
           if (a.priority_tier !== b.priority_tier) return a.priority_tier - b.priority_tier;
+
+          // Tertiary: spread pairings to avoid same staff-client combo every day
           const pairA = getPairingCount(a.id, client.id, assignments);
           const pairB = getPairingCount(b.id, client.id, assignments);
           if (pairA !== pairB) return pairA - pairB;
-          return getStaffHoursInBatch(a.id, assignments) - getStaffHoursInBatch(b.id, assignments);
+
+          // Final tiebreaker: fewer absolute hours
+          return aHours - bHours;
         });
 
         const chosen = sorted[0];
@@ -367,8 +421,9 @@ export function generateWeeklySchedule(
         const projectedHours = getStaffHoursInBatch(chosen.id, assignments) + sessionHours;
 
         const violations: string[] = [];
-        if (projectedHours > chosen.weekly_hour_goal) {
-          violations.push(`${chosen.name} will exceed weekly goal of ${chosen.weekly_hour_goal}h (projected ${projectedHours.toFixed(1)}h)`);
+        const chosenGoal = Number(chosen.weekly_hour_goal) || 0;
+        if (chosenGoal > 0 && projectedHours > chosenGoal) {
+          violations.push(`${chosen.name} will exceed weekly goal of ${chosenGoal}h (projected ${projectedHours.toFixed(1)}h)`);
         }
         if (effectiveCap !== null && effectiveCap !== undefined) {
           const clientProjected = getClientHoursInBatch(client.id, assignments) + sessionHours;
